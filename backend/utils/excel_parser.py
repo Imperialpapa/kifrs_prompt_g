@@ -68,9 +68,16 @@ def parse_rules_from_excel(content: bytes) -> Tuple[List[Dict[str, Any]], Dict[s
     total_raw_rows = 0
     reported_max_row = 0
 
+    # 메타데이터 시트 제외 목록 (규칙 매핑에서 제외)
+    EXCLUDED_SHEETS = {'파일 정보', '파일정보', 'File Info', 'Metadata', 'metadata', '_metadata'}
+
     print(f"   [INFO] Found {len(wb.sheetnames)} sheets in rules file: {wb.sheetnames}")
 
     for sheet_name in wb.sheetnames:
+        # 메타데이터 시트는 건너뛰기
+        if sheet_name in EXCLUDED_SHEETS or sheet_name.startswith('_'):
+            print(f"   [INFO] Skipping metadata sheet: '{sheet_name}'")
+            continue
         ws = wb[sheet_name]
         print(f"   [INFO] Processing rules sheet: '{sheet_name}' (Reported Max Row: {ws.max_row})")
 

@@ -193,16 +193,19 @@ class FixService:
 
         print(f"[FixService] Bulk fixing {len(cells_to_fix)} cells... (file: {filename})")
 
-        # xls 파일인 경우 pandas로 읽어서 openpyxl workbook으로 변환
+        # 파일 확장자 확인
         is_xls = filename.lower().endswith('.xls') and not filename.lower().endswith('.xlsx')
 
+        wb = None
+        
         if is_xls:
-            print("[FixService] Detected .xls format, converting via pandas...")
+            # .xls 파일 처리: 서식 유지가 어려우므로 변환 후 값만 유지
+            print("[FixService] Detected .xls format. Converting to .xlsx via pandas (Formatting may be lost)...")
             try:
                 # pandas로 xls 읽기
                 xls_data = pd.read_excel(io.BytesIO(original_file_content), sheet_name=None, engine='xlrd')
 
-                # 새 workbook 생성
+                # 새 workbook 생성 (서식 초기화됨)
                 wb = Workbook()
                 wb.remove(wb.active)  # 기본 시트 제거
 
@@ -222,16 +225,23 @@ class FixService:
 
                 print(f"[FixService] Converted {len(xls_data)} sheets from xls")
             except Exception as e:
-                print(f"[FixService] xls conversion failed: {e}, trying xlsx...")
-                wb = load_workbook(io.BytesIO(original_file_content))
+                print(f"[FixService] xls conversion failed: {e}")
+                raise ValueError(f"Failed to process .xls file: {str(e)}")
         else:
-            wb = load_workbook(io.BytesIO(original_file_content))
+            # .xlsx 파일 처리: 원본 파일을 그대로 로드하여 수정 (서식 유지)
+            print("[FixService] Detected .xlsx format. Loading original file to preserve formatting...")
+            try:
+                # BytesIO를 통해 메모리상의 원본 파일을 직접 로드
+                # openpyxl은 이 시점에서 파일 구조와 스타일을 메모리에 적재함
+                wb = load_workbook(io.BytesIO(original_file_content))
+            except Exception as e:
+                print(f"[FixService] Failed to load .xlsx file: {e}")
+                raise ValueError(f"Failed to load .xlsx file: {str(e)}")
 
         # 수정 결과 추적
-        change_log = []  # [{column, rule, before, after, sheets, count, status}]
         column_stats = {}  # column -> {sheets: set, count, success, fail}
 
-        # 스타일 정의
+        # 스타일 정의 (수정된 셀 표시용)
         yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
         red_fill = PatternFill(start_color="FF6B6B", end_color="FF6B6B", fill_type="solid")
 
@@ -259,7 +269,7 @@ class FixService:
             sheet = cell_info.get('sheet', '기본')
             row = cell_info.get('row')
             column = cell_info.get('column')
-            current_value = cell_info.get('currentValue')
+            # currentValue = cell_info.get('currentValue') # Unused
             fix_type = cell_info.get('fixType', 'unknown')
 
             if sheet not in wb.sheetnames:
@@ -284,15 +294,20 @@ class FixService:
 
             column_stats[column]['sheets'].add(sheet)
 
-            # 값 변환
+            # 값 변환 및 셀 업데이트
             try:
                 cell = ws.cell(row=row, column=col_idx)
                 original_value = cell.value
                 fixed_value = self._convert_value(original_value, fix_type)
 
                 if fixed_value is not None and fixed_value != original_value:
+                    # 값 수정
                     cell.value = fixed_value
-                    cell.fill = yellow_fill  # 수정된 셀 노란색
+                    
+                    # 수정 표시 (배경색 변경)
+                    # 주의: 원본 셀의 스타일(테두리, 폰트 등)은 유지되지만 배경색은 덮어씌워짐
+                    cell.fill = yellow_fill  
+                    
                     column_stats[column]['success'] += 1
 
                     # 샘플 저장 (최대 3개)
@@ -302,16 +317,53 @@ class FixService:
                             'after': str(fixed_value)
                         })
                 else:
-                    cell.fill = red_fill  # 수정 불가 셀 빨간색
+                    # 수정 실패 표시
+                    cell.fill = red_fill
                     column_stats[column]['fail'] += 1
 
             except Exception as e:
                 print(f"[FixService] Error fixing cell {sheet}:{column}:{row} - {e}")
                 column_stats[column]['fail'] += 1
 
-        # _변경내역 시트 생성
+        # --- [LEARNING START] Save corrections to DB ---
+        try:
+            corrections_to_save = []
+            # We don't have session_id here easily, so we might use a placeholder or omit.
+            # But the table structure expects it. Let's assume we can skip it or generate one?
+            # Actually, `apply_bulk_fixes_to_excel` doesn't receive session_id.
+            # For now, let's store general patterns without specific session link if nullable,
+            # or skip session_id if schema allows.
+            
+            # Since we iterate by column statistics, let's save representative examples
+            for column, stats in column_stats.items():
+                if stats['success'] > 0 and stats['samples']:
+                    # Save a few examples for this column
+                    for sample in stats['samples']:
+                        corrections_to_save.append({
+                            "session_id": "00000000-0000-0000-0000-000000000000", # Placeholder
+                            "sheet_name": list(stats['sheets'])[0], # Just one sheet as example
+                            "column_name": column,
+                            "old_value": sample['before'][:255], # Truncate if too long
+                            "new_value": sample['after'][:255],
+                            "correction_action": "bulk_fix",
+                            "correction_reason": f"Bulk fix: {stats['fix_type']}",
+                            "corrected_by": "user",
+                            "created_at": datetime.now().isoformat()
+                        })
+            
+            if corrections_to_save:
+                # Use rule_repo's client or validation_repo's client
+                self.validation_repo.client.table('user_corrections').insert(corrections_to_save).execute()
+                print(f"[FixService] Learned {len(corrections_to_save)} correction patterns from bulk fix.")
+                
+        except Exception as e:
+            print(f"[FixService] Failed to save learning data (non-critical): {e}")
+        # --- [LEARNING END] ---
+
+        # _변경내역 시트 생성 (항상 맨 뒤에 추가)
         change_sheet_name = "_변경내역"
         if change_sheet_name in wb.sheetnames:
+            # 기존 변경내역 시트가 있다면 삭제하고 재생성 (누적 방지)
             del wb[change_sheet_name]
 
         ws_log = wb.create_sheet(change_sheet_name)
@@ -337,7 +389,7 @@ class FixService:
             sheets_str = ", ".join(sorted(stats['sheets']))
 
             # 상태
-            total = stats['success'] + stats['fail']
+            # total = stats['success'] + stats['fail'] # Unused
             if stats['fail'] == 0:
                 status = "✅ 수정완료"
             elif stats['success'] == 0:
@@ -364,7 +416,7 @@ class FixService:
         ws_log.column_dimensions['F'].width = 12
         ws_log.column_dimensions['G'].width = 15
 
-        # 저장
+        # 저장 (BytesIO로 출력)
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
@@ -380,18 +432,34 @@ class FixService:
         if value is None:
             return None
 
+        # datetime 객체인 경우 (최우선 처리)
+        if isinstance(value, datetime):
+            return value.strftime('%Y%m%d')
+
         str_value = str(value).strip()
 
         if fix_type == 'date_format':
-            # YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD → YYYYMMDD
-            import re
-            match = re.match(r'^(\d{4})[-/.](\d{2})[-/.](\d{2})$', str_value)
-            if match:
-                return f"{match.group(1)}{match.group(2)}{match.group(3)}"
+            # 1. 시리얼 번호(숫자)인 경우 처리 (예: 45292)
+            try:
+                # 1900년 이후의 합리적인 날짜 범위인지 확인 (약 1900년~2100년)
+                num_val = float(value)
+                if 1 <= num_val <= 100000: 
+                    # 엑셀 시리얼 -> datetime 변환
+                    # (엑셀의 1900-02-29 버그 무시하고 대략적인 변환)
+                    dt = pd.to_datetime(num_val, unit='D', origin='1899-12-30')
+                    return dt.strftime('%Y%m%d')
+            except (ValueError, TypeError):
+                pass
 
-            # datetime 객체인 경우
-            if isinstance(value, datetime):
-                return value.strftime('%Y%m%d')
+            # 2. 구분자가 있는 문자열 처리 (YYYY-MM-DD, YYYY.MM.DD 등)
+            import re
+            # Loose matching: allow spaces, any separator, ignore trailing chars
+            match = re.match(r'^(\d{4})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})', str_value)
+            if match:
+                year = match.group(1)
+                month = match.group(2).zfill(2) # Pad with 0
+                day = match.group(3).zfill(2)   # Pad with 0
+                return f"{year}{month}{day}"
 
             return value
 

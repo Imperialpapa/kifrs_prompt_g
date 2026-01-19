@@ -226,6 +226,7 @@ class RuleService:
                 "rule_text": rule_data.rule_text,
                 "condition": rule_data.condition,
                 "is_active": True,
+                "is_common": rule_data.is_common,
                 # AI fields (manual input or default)
                 "ai_rule_type": rule_data.ai_rule_type,
                 "ai_parameters": rule_data.ai_parameters,
@@ -283,6 +284,7 @@ class RuleService:
                     "id": str(rule.get('id')),
                     "field_name": rule.get('field_name'),
                     "rule_text": rule.get('rule_text'),
+                    "is_common": rule.get('is_common', False),
                     "has_ai_interpretation": bool(rule.get('ai_rule_id'))
                 })
 
@@ -315,6 +317,128 @@ class RuleService:
         except Exception as e:
             print(f"[RuleService] Error fetching file details: {str(e)}")
             raise Exception(f"Failed to get rule file details: {str(e)}")
+
+    async def get_rule_mappings(self, file_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get AI mapping details for all rules in a file
+
+        Args:
+            file_id: UUID string of the rule file
+
+        Returns:
+            Dict with mapping statistics and detailed rule mappings
+        """
+        print(f"[RuleService] Fetching rule mappings for file: {file_id}")
+
+        try:
+            # Get file metadata
+            file_record = await self.repository.get_rule_file(UUID(file_id))
+
+            if not file_record:
+                print(f"[RuleService] File not found: {file_id}")
+                return None
+
+            # Get all rules
+            all_rules = await self.repository.get_rules_by_file(UUID(file_id), active_only=True)
+
+            # Categorize rules by mapping status
+            mapped_rules = []
+            unmapped_rules = []
+            partial_rules = []  # Has AI interpretation but low confidence
+
+            for rule in all_rules:
+                rule_info = {
+                    "id": str(rule.get('id')),
+                    "sheet_name": rule.get('display_sheet_name', 'Unknown'),
+                    "row_number": rule.get('row_number'),
+                    "column_letter": rule.get('column_letter'),
+                    "field_name": rule.get('field_name'),
+                    "rule_text": rule.get('rule_text'),
+                    "condition": rule.get('condition'),
+                    "note": rule.get('note'),
+                    "is_common": rule.get('is_common', False),
+                    # AI interpretation fields
+                    "ai_rule_id": rule.get('ai_rule_id'),
+                    "ai_rule_type": rule.get('ai_rule_type'),
+                    "ai_parameters": rule.get('ai_parameters'),
+                    "ai_error_message": rule.get('ai_error_message'),
+                    "ai_interpretation_summary": rule.get('ai_interpretation_summary'),
+                    "ai_confidence_score": rule.get('ai_confidence_score'),
+                    "ai_model_version": rule.get('ai_model_version'),
+                    "is_active": rule.get('is_active', True)
+                }
+
+                # Determine mapping status
+                if rule.get('ai_rule_id') and rule.get('ai_rule_type'):
+                    confidence = rule.get('ai_confidence_score', 0)
+                    if confidence and confidence >= 0.8:
+                        rule_info["mapping_status"] = "mapped"
+                        mapped_rules.append(rule_info)
+                    elif confidence and confidence >= 0.5:
+                        rule_info["mapping_status"] = "partial"
+                        partial_rules.append(rule_info)
+                    else:
+                        rule_info["mapping_status"] = "mapped"
+                        mapped_rules.append(rule_info)
+                else:
+                    rule_info["mapping_status"] = "unmapped"
+                    unmapped_rules.append(rule_info)
+
+            # Group by sheet for easier display
+            from collections import defaultdict
+            rules_by_sheet = defaultdict(list)
+            for rule in mapped_rules + partial_rules + unmapped_rules:
+                rules_by_sheet[rule['sheet_name']].append(rule)
+
+            # Sort rules within each sheet by row number
+            for sheet_name in rules_by_sheet:
+                rules_by_sheet[sheet_name].sort(key=lambda x: x.get('row_number', 0))
+
+            # Build response
+            total_rules = len(all_rules)
+            mapped_count = len(mapped_rules)
+            partial_count = len(partial_rules)
+            unmapped_count = len(unmapped_rules)
+
+            response = {
+                "file_id": file_id,
+                "file_name": file_record['file_name'],
+                "statistics": {
+                    "total_rules": total_rules,
+                    "mapped_count": mapped_count,
+                    "partial_count": partial_count,
+                    "unmapped_count": unmapped_count,
+                    "mapping_rate": round((mapped_count + partial_count) / total_rules * 100, 1) if total_rules > 0 else 0,
+                    "full_mapping_rate": round(mapped_count / total_rules * 100, 1) if total_rules > 0 else 0
+                },
+                "sheets": [
+                    {
+                        "sheet_name": sheet_name,
+                        "rules": rules,
+                        "mapped_count": sum(1 for r in rules if r['mapping_status'] == 'mapped'),
+                        "partial_count": sum(1 for r in rules if r['mapping_status'] == 'partial'),
+                        "unmapped_count": sum(1 for r in rules if r['mapping_status'] == 'unmapped')
+                    }
+                    for sheet_name, rules in sorted(rules_by_sheet.items())
+                ],
+                "available_rule_types": [
+                    {"value": "required", "label": "필수 입력 (required)", "description": "빈 값 또는 NULL 검사"},
+                    {"value": "format", "label": "형식 검증 (format)", "description": "정규식, 허용값 목록, 날짜 형식 등"},
+                    {"value": "range", "label": "범위 검증 (range)", "description": "숫자/날짜 최소/최대값"},
+                    {"value": "no_duplicates", "label": "중복 금지 (no_duplicates)", "description": "고유값 검사"},
+                    {"value": "composite", "label": "복합 검증 (composite)", "description": "여러 검증 조건을 한번에 적용 (필수+형식 등)"},
+                    {"value": "date_logic", "label": "날짜 논리 (date_logic)", "description": "날짜 간 비교 (입사일 > 생년월일)"},
+                    {"value": "cross_field", "label": "교차 필드 (cross_field)", "description": "필드 간 상호 검증"},
+                    {"value": "custom", "label": "사용자 정의 (custom)", "description": "복잡한 비즈니스 로직"}
+                ]
+            }
+
+            print(f"[RuleService] Retrieved mappings: {mapped_count} mapped, {partial_count} partial, {unmapped_count} unmapped")
+            return response
+
+        except Exception as e:
+            print(f"[RuleService] Error fetching rule mappings: {str(e)}")
+            raise Exception(f"Failed to get rule mappings: {str(e)}")
 
     async def list_rule_files(
         self,
@@ -475,11 +599,10 @@ class RuleService:
             header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
             header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-            # Write headers
+            # Write headers (Row 1: Main header, Row 2: Sub header - matches parser min_row=3)
             headers = [
                 "번호",
                 "시트명",
-                "행 번호",
                 "컬럼",
                 "필드명",
                 "규칙 내용",
@@ -491,29 +614,49 @@ class RuleService:
                 "AI 신뢰도"
             ]
 
+            # Row 1: Main headers
             for col_idx, header in enumerate(headers, start=1):
                 cell = ws.cell(row=1, column=col_idx, value=header)
                 cell.font = header_font
                 cell.fill = header_fill
                 cell.alignment = header_alignment
 
-            # Write data rows
-            for idx, rule in enumerate(all_rules, start=2):
-                ws.cell(row=idx, column=1, value=idx - 1)
-                ws.cell(row=idx, column=2, value=rule.get('display_sheet_name'))
-                ws.cell(row=idx, column=3, value=rule.get('row_number'))
-                ws.cell(row=idx, column=4, value=rule.get('column_letter'))
-                ws.cell(row=idx, column=5, value=rule.get('field_name'))
-                ws.cell(row=idx, column=6, value=rule.get('rule_text'))
-                ws.cell(row=idx, column=7, value=rule.get('condition'))
-                ws.cell(row=idx, column=8, value=rule.get('note'))
-                ws.cell(row=idx, column=9, value="예" if rule.get('ai_rule_id') else "아니오")
-                ws.cell(row=idx, column=10, value=rule.get('ai_rule_id') or "")
-                ws.cell(row=idx, column=11, value=rule.get('ai_rule_type') or "")
-                ws.cell(row=idx, column=12, value=rule.get('ai_confidence_score') or "")
+            # Row 2: Sub headers (empty or descriptive) - parser skips rows 1-2
+            sub_headers = [
+                "(자동)",
+                "(시트명)",
+                "(열)",
+                "(필드)",
+                "(검증 규칙)",
+                "(조건)",
+                "(비고)",
+                "(AI)",
+                "(규칙ID)",
+                "(유형)",
+                "(신뢰도)"
+            ]
+            sub_header_fill = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
+            for col_idx, sub_header in enumerate(sub_headers, start=1):
+                cell = ws.cell(row=2, column=col_idx, value=sub_header)
+                cell.fill = sub_header_fill
+                cell.alignment = Alignment(horizontal="center", vertical="center")
 
-            # Adjust column widths
-            column_widths = [8, 25, 10, 10, 20, 40, 30, 30, 15, 20, 20, 12]
+            # Write data rows starting from row 3 (matches parser min_row=3)
+            for idx, rule in enumerate(all_rules, start=3):
+                ws.cell(row=idx, column=1, value=idx - 2)  # 번호: 1, 2, 3...
+                ws.cell(row=idx, column=2, value=rule.get('display_sheet_name'))
+                ws.cell(row=idx, column=3, value=rule.get('column_letter'))
+                ws.cell(row=idx, column=4, value=rule.get('field_name'))
+                ws.cell(row=idx, column=5, value=rule.get('rule_text'))
+                ws.cell(row=idx, column=6, value=rule.get('condition'))
+                ws.cell(row=idx, column=7, value=rule.get('note'))
+                ws.cell(row=idx, column=8, value="예" if rule.get('ai_rule_id') else "아니오")
+                ws.cell(row=idx, column=9, value=rule.get('ai_rule_id') or "")
+                ws.cell(row=idx, column=10, value=rule.get('ai_rule_type') or "")
+                ws.cell(row=idx, column=11, value=rule.get('ai_confidence_score') or "")
+
+            # Adjust column widths (11 columns now)
+            column_widths = [8, 25, 10, 20, 40, 30, 30, 12, 20, 15, 10]
             for col_idx, width in enumerate(column_widths, start=1):
                 ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = width
 

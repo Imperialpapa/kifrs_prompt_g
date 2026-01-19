@@ -63,14 +63,21 @@
             </div>
         </div>
 
-        <nav class="p-4 space-y-1">
-            <template x-for="item in navItems" :key="item.id">
-                <button @click="currentTab = item.id; if(window.innerWidth < 1024) sidebarOpen = false"
-                        class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors"
-                        :class="currentTab === item.id ? 'bg-primary-50 text-primary-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'">
-                    <i :class="item.icon" class="text-lg"></i>
-                    <span x-text="item.label"></span>
-                </button>
+        <nav class="p-4 space-y-6">
+            <template x-for="group in navGroups" :key="group.title">
+                <div>
+                    <div class="px-4 mb-2 text-xs font-bold text-slate-400 uppercase tracking-wider" x-text="group.title"></div>
+                    <div class="space-y-1">
+                        <template x-for="item in group.items" :key="item.id">
+                            <button @click="if(item.id === 'settings') { settingsModalOpen = true } else { currentTab = item.id }; if(window.innerWidth < 1024) sidebarOpen = false"
+                                    class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
+                                    :class="(item.id !== 'settings' && currentTab === item.id) ? 'bg-primary-50 text-primary-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'">
+                                <i :class="item.icon" class="text-lg"></i>
+                                <span x-text="item.label"></span>
+                            </button>
+                        </template>
+                    </div>
+                </div>
             </template>
         </nav>
 
@@ -105,12 +112,6 @@
 
         <div class="absolute bottom-0 w-full p-4 border-t border-slate-100 bg-white">
             <div class="space-y-3">
-                <!-- Settings Button -->
-                <button @click="settingsModalOpen = true" class="w-full flex items-center gap-3 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-lg transition-colors">
-                    <i class="ph ph-gear text-lg"></i>
-                    <span>설정 (AI 모델)</span>
-                </button>
-                
                 <div class="flex items-center gap-2 px-4">
                     <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
                     <span class="text-xs font-semibold text-slate-600">System Online</span>
@@ -416,8 +417,31 @@
                         </div>
                     </div>
 
+                    <!-- Dashboard Tabs -->
+                    <div class="border-b border-slate-200 mb-6">
+                        <nav class="-mb-px flex space-x-8" aria-label="Tabs">
+                            <button @click="dashboardTab = 'analysis'"
+                                    :class="dashboardTab === 'analysis' 
+                                        ? 'border-primary-500 text-primary-600' 
+                                        : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'"
+                                    class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2">
+                                <i class="ph-fill ph-chart-bar"></i>
+                                시트별 상세 분석
+                            </button>
+                            <button @click="dashboardTab = 'fix'"
+                                    :class="dashboardTab === 'fix' 
+                                        ? 'border-primary-500 text-primary-600' 
+                                        : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'"
+                                    class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2">
+                                <i class="ph-fill ph-wrench"></i>
+                                오류 항목 수정하기
+                                <span x-show="hasFixableItems()" class="ml-2 bg-green-100 text-green-700 py-0.5 px-2 rounded-full text-xs">Available</span>
+                            </button>
+                        </nav>
+                    </div>
+
                     <!-- Detailed Analysis Section with Tabs -->
-                    <div class="space-y-4" x-show="selectedSheet">
+                    <div class="space-y-4" x-show="selectedSheet && dashboardTab === 'analysis'">
                         <div class="flex items-center justify-between">
                             <h3 class="font-semibold text-slate-800 flex items-center gap-2">
                                 <i class="ph-fill ph-list-magnifying-glass text-primary-600"></i>
@@ -518,7 +542,14 @@
                     </div>
 
                     <!-- Error Fix Section with Tabs (오류 항목 수정하기) -->
-                    <template x-if="results?.summary?.error_rows > 0 && hasFixableItems()">
+                    <div x-show="dashboardTab === 'fix'">
+                        <div x-show="!hasFixableItems()" class="text-center py-12 bg-slate-50 rounded-xl border border-slate-200 border-dashed">
+                            <i class="ph ph-check-circle text-4xl text-slate-300 mb-3"></i>
+                            <p class="text-slate-500 font-medium">수정 가능한 오류 항목이 없습니다.</p>
+                            <p class="text-sm text-slate-400 mt-1">모든 데이터가 정상이거나, 자동 수정이 불가능한 항목입니다.</p>
+                        </div>
+
+                        <template x-if="hasFixableItems()">
                         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                             <!-- Section Header -->
                             <div class="flex items-center justify-between p-4 border-b border-slate-200 bg-slate-50">
@@ -665,6 +696,21 @@
                                         </div>
                                     </div>
 
+                                    <!-- Download Button (Moved to Top) -->
+                                    <div class="mb-4 p-4 bg-indigo-50 rounded-xl border border-indigo-100 flex items-center justify-between shadow-sm">
+                                        <div class="text-sm text-indigo-700">
+                                            <i class="ph-fill ph-info mr-1"></i>
+                                            <span class="font-semibold" x-text="fixPreview.success"></span>건 수정 가능. 
+                                            수정된 셀은 <span class="bg-yellow-200 px-1 rounded">노란색</span>으로 표시됩니다.
+                                        </div>
+                                        <button @click="downloadFixedFile()"
+                                                class="px-6 py-2.5 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-indigo-200"
+                                                :disabled="isDownloading || fixPreview.success === 0">
+                                            <i class="ph ph-download-simple text-lg"></i>
+                                            <span x-text="isDownloading ? '생성 중...' : '수정 파일 다운로드'"></span>
+                                        </button>
+                                    </div>
+
                                     <!-- Filter -->
                                     <div class="flex items-center gap-2 mb-3">
                                         <select x-model="fixPreviewFilter"
@@ -720,25 +766,11 @@
                                             ... 외 <span x-text="getFilteredPreviewItems().length - 50"></span>건 더 있음
                                         </div>
                                     </div>
-
-                                    <!-- Download Button -->
-                                    <div class="mt-4 pt-4 border-t border-slate-200 flex items-center justify-between">
-                                        <div class="text-sm text-slate-500">
-                                            <i class="ph ph-info mr-1"></i>
-                                            수정된 셀은 <span class="px-1 py-0.5 bg-yellow-200 rounded text-xs">노란색</span>,
-                                            실패한 셀은 <span class="px-1 py-0.5 bg-red-200 rounded text-xs">빨간색</span>으로 표시됩니다.
-                                        </div>
-                                        <button @click="downloadFixedFile()"
-                                                class="px-5 py-2.5 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
-                                                :disabled="isDownloading || fixPreview.success === 0">
-                                            <i class="ph ph-download-simple text-lg"></i>
-                                            <span x-text="isDownloading ? '생성 중...' : '수정 파일 다운로드'"></span>
-                                        </button>
-                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </template>
+                        </template>
+                    </div>
 
                 </div>
             </div>
@@ -967,144 +999,476 @@
                 </div>
             </div>
 
-            <!-- VIEW: RULES MANAGEMENT -->
-            <div x-show="currentTab === 'rules'" x-cloak x-init="if(currentTab === 'rules') loadRuleFiles()">
-                <div class="max-w-6xl mx-auto space-y-8">
-
-                    <!-- Upload Section -->
-                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-                        <div class="flex items-center gap-3 mb-6">
-                            <div class="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center">
-                                <i class="ph ph-upload-simple text-primary-600 text-xl"></i>
-                            </div>
-                            <div>
-                                <h2 class="text-xl font-bold text-slate-900">규칙 파일 업로드</h2>
-                                <p class="text-sm text-slate-500">Excel 규칙 파일을 데이터베이스에 저장합니다</p>
-                            </div>
+            <!-- VIEW: LEARNING DASHBOARD -->
+            <div x-show="currentTab === 'learning'" x-cloak x-init="$watch('currentTab', val => { if(val === 'learning') loadLearningStats() })">
+                <div class="max-w-7xl mx-auto space-y-6">
+                    
+                    <!-- Header -->
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h2 class="text-2xl font-bold text-slate-900 flex items-center gap-2">
+                                <i class="ph-fill ph-brain text-purple-600"></i>
+                                AI 학습 현황
+                            </h2>
+                            <p class="text-slate-500 mt-1">사용자 피드백을 통해 학습된 규칙 패턴과 성능을 모니터링합니다.</p>
                         </div>
-
-                        <div class="space-y-4">
-                            <div>
-                                <label class="block text-sm font-medium text-slate-700 mb-2">규칙 파일 선택</label>
-                                <input type="file" id="ruleFileInput" accept=".xlsx,.xls"
-                                       @change="handleRuleFileSelect($event)"
-                                       class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100 cursor-pointer">
-                                <p class="mt-1 text-xs text-slate-500" x-text="ruleFileToUpload ? '선택됨: ' + ruleFileToUpload.name : 'Excel 파일을 선택하세요 (.xlsx, .xls)'"></p>
-                            </div>
-
-                            <div class="grid md:grid-cols-3 gap-4">
-                                <div>
-                                    <label class="block text-sm font-medium text-slate-700 mb-2">파일 버전</label>
-                                    <input type="text" x-model="ruleFileVersion"
-                                           class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
-                                           placeholder="예: 1.0">
-                                </div>
-
-                                <div>
-                                    <label class="block text-sm font-medium text-slate-700 mb-2">업로드자</label>
-                                    <input type="text" x-model="ruleFileUploadedBy"
-                                           class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
-                                           placeholder="예: system">
-                                </div>
-
-                                <div>
-                                    <label class="block text-sm font-medium text-slate-700 mb-2">비고</label>
-                                    <input type="text" x-model="ruleFileNotes"
-                                           class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
-                                           placeholder="선택사항">
-                                </div>
-                            </div>
-
-                            <button @click="uploadRuleFileToDb" :disabled="!ruleFileToUpload || uploadingRuleFile"
-                                    class="w-full sm:w-auto px-6 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors font-medium flex items-center justify-center gap-2">
-                                <i class="ph ph-cloud-arrow-up text-xl" x-show="!uploadingRuleFile"></i>
-                                <i class="ph ph-circle-notch text-xl animate-spin" x-show="uploadingRuleFile"></i>
-                                <span x-text="uploadingRuleFile ? '업로드 중...' : '데이터베이스에 업로드'"></span>
-                            </button>
-                        </div>
+                        <button @click="loadLearningStats()" class="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors">
+                            <i class="ph ph-arrows-clockwise text-xl"></i>
+                        </button>
                     </div>
 
-                    <!-- Saved Rules List -->
-                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-                        <div class="flex items-center justify-between mb-6">
-                            <div class="flex items-center gap-3">
-                                <div class="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
-                                    <i class="ph ph-database text-green-600 text-xl"></i>
-                                </div>
-                                <div>
-                                    <h2 class="text-xl font-bold text-slate-900">저장된 규칙 파일</h2>
-                                    <p class="text-sm text-slate-500">데이터베이스에 저장된 규칙 파일 목록</p>
+                    <!-- Loading State -->
+                    <div x-show="!learningStats" class="flex flex-col items-center justify-center py-20">
+                        <i class="ph-bold ph-spinner animate-spin text-4xl text-purple-500 mb-4"></i>
+                        <p class="text-slate-500">학습 데이터를 불러오는 중...</p>
+                    </div>
+
+                    <div x-show="learningStats" class="space-y-6">
+                        <!-- Stat Cards -->
+                        <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                <div class="text-slate-500 text-sm font-medium mb-2">학습된 패턴</div>
+                                <div class="text-3xl font-bold text-slate-800" x-text="learningStats?.total_patterns || 0"></div>
+                                <div class="text-xs text-slate-400 mt-1">
+                                    <span x-text="learningStats?.active_patterns || 0"></span>개 활성 패턴
                                 </div>
                             </div>
-                            <button @click="loadRuleFiles" class="px-4 py-2 text-sm bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors flex items-center gap-2">
-                                <i class="ph ph-arrows-clockwise"></i>
-                                <span>새로고침</span>
-                            </button>
+                            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                <div class="text-slate-500 text-sm font-medium mb-2">패턴 사용 횟수</div>
+                                <div class="text-3xl font-bold text-purple-600" x-text="learningStats?.total_usage || 0"></div>
+                            </div>
+                            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                <div class="text-slate-500 text-sm font-medium mb-2">평균 신뢰도</div>
+                                <div class="text-3xl font-bold text-slate-800">
+                                    <span x-text="Math.round((learningStats?.avg_confidence || 0) * 100)"></span>%
+                                </div>
+                            </div>
+                            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                <div class="text-slate-500 text-sm font-medium mb-2">적중률 (성공)</div>
+                                <div class="text-3xl font-bold text-green-600">
+                                    <span x-text="Math.round((learningStats?.success_rate || 0) * 100)"></span>%
+                                </div>
+                            </div>
                         </div>
 
-                        <div class="space-y-3" x-show="ruleFiles.length > 0">
-                            <template x-for="file in ruleFiles" :key="file.id">
-                                <div class="border border-slate-200 rounded-lg p-4 hover:border-primary-300 hover:bg-primary-50/30 transition-all">
-                                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                                        <div class="flex-1">
-                                            <div class="flex items-center gap-2 mb-2">
-                                                <h3 class="font-semibold text-slate-900" x-text="file.file_name"></h3>
-                                                <span class="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full" x-text="'v' + file.file_version"></span>
-                                                <span class="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full" x-text="file.status"></span>
+                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                            <!-- Top Patterns -->
+                            <div class="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                                <div class="p-6 border-b border-slate-100">
+                                    <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                                        <i class="ph-fill ph-star text-yellow-500"></i>
+                                        주요 학습 패턴 (Top 10)
+                                    </h3>
+                                </div>
+                                <div class="overflow-x-auto">
+                                    <table class="w-full text-sm">
+                                        <thead class="bg-slate-50 text-slate-500 font-medium">
+                                            <tr>
+                                                <th class="px-6 py-3 text-left">원본 규칙 (예시)</th>
+                                                <th class="px-6 py-3 text-left">AI 해석 유형</th>
+                                                <th class="px-6 py-3 text-center">사용</th>
+                                                <th class="px-6 py-3 text-center">신뢰도</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-slate-100">
+                                            <template x-for="pattern in learningStats?.top_patterns || []" :key="pattern.id">
+                                                <tr class="hover:bg-slate-50 transition-colors">
+                                                    <td class="px-6 py-4">
+                                                        <div class="truncate max-w-xs text-slate-700" x-text="pattern.text_preview"></div>
+                                                    </td>
+                                                    <td class="px-6 py-4">
+                                                        <span class="px-2 py-1 bg-purple-50 text-purple-700 rounded text-xs font-medium" x-text="pattern.rule_type"></span>
+                                                    </td>
+                                                    <td class="px-6 py-4 text-center text-slate-600" x-text="pattern.usage_count"></td>
+                                                    <td class="px-6 py-4">
+                                                        <div class="flex items-center justify-center gap-2">
+                                                            <div class="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                                                <div class="h-full bg-green-500 rounded-full" :style="'width: ' + (pattern.confidence * 100) + '%'"></div>
+                                                            </div>
+                                                            <span class="text-xs text-slate-500" x-text="Math.round(pattern.confidence * 100) + '%'"></span>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            </template>
+                                            <tr x-show="!learningStats?.top_patterns?.length">
+                                                <td colspan="4" class="px-6 py-10 text-center text-slate-400">
+                                                    학습된 패턴이 없습니다.
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- Recent Feedback -->
+                            <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex flex-col h-full">
+                                <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                                    <i class="ph-fill ph-clock-counter-clockwise text-blue-500"></i>
+                                    최근 피드백
+                                </h3>
+                                <div class="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar max-h-[400px]">
+                                    <template x-for="feed in learningStats?.recent_feedback || []" :key="feed.id">
+                                        <div class="flex gap-3">
+                                            <div class="mt-1">
+                                                <div class="w-2 h-2 rounded-full" 
+                                                     :class="feed.feedback_type === 'success' ? 'bg-green-500' : 
+                                                             feed.feedback_type === 'false_positive' ? 'bg-orange-500' : 'bg-red-500'"></div>
                                             </div>
-                                            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm text-slate-600">
-                                                <div class="flex items-center gap-1">
-                                                    <i class="ph ph-file text-slate-400"></i>
-                                                    <span x-text="file.total_rules_count + ' 규칙'"></span>
+                                            <div class="flex-1 pb-4 border-b border-slate-50 last:border-0 last:pb-0">
+                                                <div class="flex justify-between items-start mb-1">
+                                                    <span class="text-xs font-bold uppercase" 
+                                                          :class="feed.feedback_type === 'success' ? 'text-green-600' : 
+                                                                  feed.feedback_type === 'false_positive' ? 'text-orange-600' : 'text-red-600'"
+                                                          x-text="feed.feedback_type"></span>
+                                                    <span class="text-[10px] text-slate-400" x-text="new Date(feed.created_at).toLocaleDateString()"></span>
                                                 </div>
-                                                <div class="flex items-center gap-1">
-                                                    <i class="ph ph-stack text-slate-400"></i>
-                                                    <span x-text="file.sheet_count + ' 시트'"></span>
-                                                </div>
-                                                <div class="flex items-center gap-1">
-                                                    <i class="ph ph-user text-slate-400"></i>
-                                                    <span x-text="file.uploaded_by"></span>
-                                                </div>
-                                                <div class="flex items-center gap-1">
-                                                    <i class="ph ph-calendar text-slate-400"></i>
-                                                    <span x-text="new Date(file.uploaded_at).toLocaleDateString()"></span>
-                                                </div>
+                                                <p class="text-xs text-slate-600" x-show="feed.details && feed.details.user_explanation" x-text="feed.details.user_explanation"></p>
+                                                <p class="text-xs text-slate-400 mt-1" x-show="feed.details && !feed.details.user_explanation">
+                                                    <span x-show="feed.feedback_type === 'success'">검증 성공 (오류율 < 5%)</span>
+                                                    <span x-show="feed.feedback_type === 'false_positive'">사용자 신고</span>
+                                                </p>
                                             </div>
                                         </div>
-                                        <div class="flex items-center gap-2">
-                                            <button @click="viewRuleFileDetails(file.id)"
-                                                    class="px-3 py-2 text-sm bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors flex items-center gap-1">
-                                                <i class="ph ph-eye"></i>
-                                                <span>상세</span>
-                                            </button>
-                                            <button @click="reinterpretRules(file.id)"
-                                                    class="px-3 py-2 text-sm bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-lg transition-colors flex items-center gap-1"
-                                                    title="AI 해석 오류 시 로컬 파서로 재해석">
-                                                <i class="ph ph-arrows-clockwise"></i>
-                                                <span>재해석</span>
-                                            </button>
-                                            <button @click="downloadRuleFile(file.id, file.file_name)"
-                                                    class="px-3 py-2 text-sm bg-primary-100 hover:bg-primary-200 text-primary-700 rounded-lg transition-colors flex items-center gap-1">
-                                                <i class="ph ph-download-simple"></i>
-                                                <span>다운로드</span>
-                                            </button>
-                                            <button @click="archiveRuleFile(file.id)"
-                                                    class="px-3 py-2 text-sm bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition-colors flex items-center gap-1"
-                                                    title="규칙 파일 삭제">
-                                                <i class="ph ph-trash"></i>
-                                                <span>삭제</span>
-                                            </button>
-                                        </div>
+                                    </template>
+                                    <div x-show="!learningStats?.recent_feedback?.length" class="text-center py-10 text-slate-400 text-sm">
+                                        최근 피드백 내역이 없습니다.
                                     </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- VIEW: RULES MANAGEMENT (REDESIGNED) -->
+            <div x-show="currentTab === 'rules'" x-cloak x-init="if(currentTab === 'rules') loadRuleFiles()">
+                <div class="max-w-7xl mx-auto space-y-6">
+
+                    <!-- Header with Step Indicator -->
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+                        <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
+                            <div>
+                                <h2 class="text-2xl font-bold text-slate-900 flex items-center gap-2">
+                                    <i class="ph-fill ph-gear-six text-primary-600"></i>
+                                    규칙 관리
+                                </h2>
+                                <p class="text-slate-500 mt-1">검증 규칙을 업로드하고 AI 매핑을 검토하세요</p>
+                            </div>
+                        </div>
+
+                        <!-- Step Indicator (2 Steps) -->
+                        <div class="flex items-center justify-center gap-2 mb-4">
+                            <template x-for="(step, idx) in [{num: 1, label: '파일 선택'}, {num: 2, label: '규칙 매핑 편집'}]" :key="step.num">
+                                <div class="flex items-center">
+                                    <button @click="ruleManagementStep = step.num"
+                                            :disabled="step.num === 2 && !selectedRuleFile"
+                                            class="flex items-center gap-2 px-4 py-2 rounded-lg transition-all"
+                                            :class="ruleManagementStep === step.num ? 'bg-primary-600 text-white shadow-lg' :
+                                                   (step.num < ruleManagementStep ? 'bg-green-100 text-green-700 hover:bg-green-200' :
+                                                   'bg-slate-100 text-slate-500 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed')">
+                                        <span class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
+                                              :class="step.num < ruleManagementStep ? 'bg-green-500 text-white' :
+                                                      (ruleManagementStep === step.num ? 'bg-white text-primary-600' : 'bg-slate-300 text-slate-600')"
+                                              x-text="step.num < ruleManagementStep ? '✓' : step.num"></span>
+                                        <span class="font-medium hidden sm:inline" x-text="step.label"></span>
+                                    </button>
+                                    <div x-show="idx < 1" class="w-8 h-0.5 mx-1" :class="step.num < ruleManagementStep ? 'bg-green-400' : 'bg-slate-200'"></div>
                                 </div>
                             </template>
                         </div>
+                    </div>
 
-                        <div x-show="ruleFiles.length === 0" class="text-center py-12 text-slate-500">
-                            <i class="ph ph-files text-5xl mb-3"></i>
-                            <p>저장된 규칙 파일이 없습니다</p>
+                    <!-- Step 1: File Upload/Selection -->
+                    <div x-show="ruleManagementStep === 1" class="space-y-6">
+                        <!-- Upload Section -->
+                        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+                            <div class="flex items-center gap-3 mb-6">
+                                <div class="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center">
+                                    <i class="ph ph-upload-simple text-primary-600 text-xl"></i>
+                                </div>
+                                <div>
+                                    <h3 class="text-lg font-bold text-slate-900">새 규칙 파일 업로드</h3>
+                                    <p class="text-sm text-slate-500">Excel 규칙 파일을 업로드하면 자동으로 AI 해석이 진행됩니다</p>
+                                </div>
+                            </div>
+
+                            <div class="grid lg:grid-cols-2 gap-6">
+                                <div class="space-y-4">
+                                    <div class="border-2 border-dashed border-slate-300 rounded-xl p-6 text-center hover:border-primary-400 hover:bg-primary-50/30 transition-all cursor-pointer"
+                                         @click="$refs.ruleFileInputNew.click()">
+                                        <input type="file" x-ref="ruleFileInputNew" accept=".xlsx,.xls" @change="handleRuleFileSelect($event)" class="hidden">
+                                        <i class="ph ph-file-xls text-4xl text-slate-400 mb-2"></i>
+                                        <p class="text-slate-600 font-medium" x-text="ruleFileToUpload ? ruleFileToUpload.name : '클릭하여 파일 선택'"></p>
+                                        <p class="text-xs text-slate-400 mt-1">.xlsx, .xls 파일 지원</p>
+                                    </div>
+                                </div>
+                                <div class="space-y-3">
+                                    <div class="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label class="block text-xs font-medium text-slate-600 mb-1">파일 버전</label>
+                                            <input type="text" x-model="ruleFileVersion" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500" placeholder="1.0">
+                                        </div>
+                                        <div>
+                                            <label class="block text-xs font-medium text-slate-600 mb-1">업로드자</label>
+                                            <input type="text" x-model="ruleFileUploadedBy" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500" placeholder="system">
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-600 mb-1">비고 (선택)</label>
+                                        <input type="text" x-model="ruleFileNotes" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500" placeholder="파일에 대한 메모">
+                                    </div>
+                                    <button @click="uploadRuleFileToDb" :disabled="!ruleFileToUpload || uploadingRuleFile"
+                                            class="w-full px-4 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors font-medium flex items-center justify-center gap-2">
+                                        <i class="ph ph-cloud-arrow-up text-lg" x-show="!uploadingRuleFile"></i>
+                                        <i class="ph ph-circle-notch text-lg animate-spin" x-show="uploadingRuleFile"></i>
+                                        <span x-text="uploadingRuleFile ? '업로드 및 AI 해석 중...' : '업로드 및 AI 해석 시작'"></span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Saved Rules List -->
+                        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+                            <div class="flex items-center justify-between mb-4">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                                        <i class="ph ph-database text-green-600 text-xl"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="text-lg font-bold text-slate-900">저장된 규칙 파일</h3>
+                                        <p class="text-sm text-slate-500" x-text="ruleFiles.length + '개 파일'"></p>
+                                    </div>
+                                </div>
+                                <button @click="loadRuleFiles" class="p-2 text-slate-500 hover:bg-slate-100 rounded-lg transition-colors">
+                                    <i class="ph ph-arrows-clockwise text-lg"></i>
+                                </button>
+                            </div>
+
+                            <div class="space-y-2" x-show="ruleFiles.length > 0">
+                                <template x-for="file in ruleFiles" :key="file.id">
+                                    <div class="border border-slate-200 rounded-lg p-4 hover:border-primary-400 hover:shadow-md transition-all cursor-pointer"
+                                         :class="selectedRuleFile === file.id ? 'border-primary-500 bg-primary-50 shadow-md' : ''"
+                                         @click="selectRuleFile(file.id)">
+                                        <div class="flex items-center justify-between">
+                                            <div class="flex items-center gap-3">
+                                                <div class="w-10 h-10 rounded-lg flex items-center justify-center"
+                                                     :class="selectedRuleFile === file.id ? 'bg-primary-600 text-white' : 'bg-slate-100 text-slate-500'">
+                                                    <i class="ph ph-file-xls text-xl"></i>
+                                                </div>
+                                                <div>
+                                                    <div class="flex items-center gap-2">
+                                                        <h4 class="font-semibold text-slate-900" x-text="file.file_name"></h4>
+                                                        <span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-[10px] rounded" x-text="'v' + file.file_version"></span>
+                                                    </div>
+                                                    <div class="flex items-center gap-3 text-xs text-slate-500 mt-1">
+                                                        <span><i class="ph ph-list-checks mr-1"></i><span x-text="file.total_rules_count"></span> 규칙</span>
+                                                        <span><i class="ph ph-stack mr-1"></i><span x-text="file.sheet_count"></span> 시트</span>
+                                                        <span><i class="ph ph-calendar mr-1"></i><span x-text="new Date(file.uploaded_at).toLocaleDateString()"></span></span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="flex items-center gap-1" @click.stop>
+                                                <button @click="downloadRuleFile(file.id, file.file_name)" class="p-2 text-slate-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors" title="다운로드">
+                                                    <i class="ph ph-download-simple"></i>
+                                                </button>
+                                                <button @click="archiveRuleFile(file.id)" class="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="삭제">
+                                                    <i class="ph ph-trash"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+
+                            <div x-show="ruleFiles.length === 0" class="text-center py-8 text-slate-400">
+                                <i class="ph ph-files text-4xl mb-2"></i>
+                                <p>저장된 규칙 파일이 없습니다</p>
+                            </div>
+
+                            <!-- Next Step Button -->
+                            <div x-show="selectedRuleFile" class="mt-4 pt-4 border-t border-slate-100">
+                                <button @click="goToMappingReview()" class="w-full px-4 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-medium flex items-center justify-center gap-2">
+                                    <span>매핑 검토로 이동</span>
+                                    <i class="ph ph-arrow-right"></i>
+                                </button>
+                            </div>
                         </div>
                     </div>
+
+                    <!-- Step 2: Rule Mapping Edit (Integrated) -->
+                    <div x-show="ruleManagementStep === 2" class="space-y-4">
+                        <!-- Mapping Statistics -->
+                        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+                            <div class="flex items-center justify-between mb-4">
+                                <div>
+                                    <h3 class="text-lg font-bold text-slate-900" x-text="ruleMappings?.file_name || '규칙 파일'"></h3>
+                                    <p class="text-sm text-slate-500">원본 규칙과 AI 해석 결과를 검토하고 수정하세요</p>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <button @click="openCreateRuleModal()" class="px-3 py-2 text-sm bg-green-600 text-white hover:bg-green-700 rounded-lg transition-colors flex items-center gap-1">
+                                        <i class="ph ph-plus"></i>
+                                        <span>규칙 추가</span>
+                                    </button>
+                                    <button @click="reinterpretRulesAndRefresh()" class="px-3 py-2 text-sm bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-lg transition-colors flex items-center gap-1" title="전체 규칙을 다시 AI 해석합니다">
+                                        <i class="ph ph-arrows-clockwise"></i>
+                                        <span>전체 재해석</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Stats Cards -->
+                            <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4" x-show="ruleMappings">
+                                <div class="bg-slate-50 rounded-lg p-3 text-center">
+                                    <div class="text-2xl font-bold text-slate-800" x-text="ruleMappings?.statistics?.total_rules || 0"></div>
+                                    <div class="text-xs text-slate-500">전체 규칙</div>
+                                </div>
+                                <div class="bg-green-50 rounded-lg p-3 text-center">
+                                    <div class="text-2xl font-bold text-green-600" x-text="ruleMappings?.statistics?.mapped_count || 0"></div>
+                                    <div class="text-xs text-green-600">매핑 완료</div>
+                                </div>
+                                <div class="bg-amber-50 rounded-lg p-3 text-center">
+                                    <div class="text-2xl font-bold text-amber-600" x-text="ruleMappings?.statistics?.partial_count || 0"></div>
+                                    <div class="text-xs text-amber-600">부분 매핑</div>
+                                </div>
+                                <div class="bg-red-50 rounded-lg p-3 text-center">
+                                    <div class="text-2xl font-bold text-red-600" x-text="ruleMappings?.statistics?.unmapped_count || 0"></div>
+                                    <div class="text-xs text-red-600">미매핑</div>
+                                </div>
+                            </div>
+
+                            <!-- Progress Bar -->
+                            <div class="mb-4" x-show="ruleMappings">
+                                <div class="flex items-center justify-between text-xs text-slate-500 mb-1">
+                                    <span>매핑률</span>
+                                    <span x-text="(ruleMappings?.statistics?.mapping_rate || 0) + '%'"></span>
+                                </div>
+                                <div class="h-2 bg-slate-200 rounded-full overflow-hidden">
+                                    <div class="h-full bg-gradient-to-r from-green-500 to-primary-500 transition-all duration-500"
+                                         :style="'width: ' + (ruleMappings?.statistics?.mapping_rate || 0) + '%'"></div>
+                                </div>
+                            </div>
+
+                            <!-- Filters -->
+                            <div class="flex flex-wrap items-center gap-2">
+                                <div class="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+                                    <button @click="mappingFilterStatus = 'all'" class="px-3 py-1.5 text-xs rounded-md transition-all" :class="mappingFilterStatus === 'all' ? 'bg-white shadow text-slate-800' : 'text-slate-500 hover:text-slate-700'">전체</button>
+                                    <button @click="mappingFilterStatus = 'mapped'" class="px-3 py-1.5 text-xs rounded-md transition-all" :class="mappingFilterStatus === 'mapped' ? 'bg-white shadow text-green-600' : 'text-slate-500 hover:text-slate-700'">매핑완료</button>
+                                    <button @click="mappingFilterStatus = 'partial'" class="px-3 py-1.5 text-xs rounded-md transition-all" :class="mappingFilterStatus === 'partial' ? 'bg-white shadow text-amber-600' : 'text-slate-500 hover:text-slate-700'">부분</button>
+                                    <button @click="mappingFilterStatus = 'unmapped'" class="px-3 py-1.5 text-xs rounded-md transition-all" :class="mappingFilterStatus === 'unmapped' ? 'bg-white shadow text-red-600' : 'text-slate-500 hover:text-slate-700'">미매핑</button>
+                                </div>
+                                <select x-model="selectedMappingSheet" class="px-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white">
+                                    <option value="all">모든 시트</option>
+                                    <template x-for="sheet in ruleMappings?.sheets || []" :key="sheet.sheet_name">
+                                        <option :value="sheet.sheet_name" x-text="sheet.sheet_name + ' (' + sheet.rules.length + ')'"></option>
+                                    </template>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Loading -->
+                        <div x-show="ruleMappingsLoading" class="bg-white rounded-xl border border-slate-200 shadow-sm p-12 text-center">
+                            <i class="ph ph-circle-notch text-4xl text-primary-600 animate-spin mb-3"></i>
+                            <p class="text-slate-600">매핑 정보를 불러오는 중...</p>
+                        </div>
+
+                        <!-- Mapping Table -->
+                        <div x-show="!ruleMappingsLoading && ruleMappings" class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-sm">
+                                    <thead class="bg-slate-50 border-b border-slate-200">
+                                        <tr>
+                                            <th class="text-left px-4 py-3 font-medium text-slate-600">상태</th>
+                                            <th class="text-center px-4 py-3 font-medium text-slate-600">공통</th>
+                                            <th class="text-left px-4 py-3 font-medium text-slate-600">시트</th>
+                                            <th class="text-left px-4 py-3 font-medium text-slate-600">필드명</th>
+                                            <th class="text-left px-4 py-3 font-medium text-slate-600 min-w-[200px]">원본 규칙</th>
+                                            <th class="text-left px-4 py-3 font-medium text-slate-600">AI 해석 유형</th>
+                                            <th class="text-left px-4 py-3 font-medium text-slate-600">파라미터</th>
+                                            <th class="text-left px-4 py-3 font-medium text-slate-600">신뢰도</th>
+                                            <th class="text-left px-4 py-3 font-medium text-slate-600">작업</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-100">
+                                        <template x-for="sheet in getFilteredMappingSheets()" :key="sheet.sheet_name">
+                                            <template x-for="rule in getFilteredRules(sheet.rules)" :key="rule.id">
+                                                <tr class="hover:bg-slate-50 transition-colors">
+                                                    <td class="px-4 py-3">
+                                                        <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium"
+                                                              :class="rule.mapping_status === 'mapped' ? 'bg-green-100 text-green-700' :
+                                                                      rule.mapping_status === 'partial' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'">
+                                                            <i :class="rule.mapping_status === 'mapped' ? 'ph-fill ph-check-circle' :
+                                                                       rule.mapping_status === 'partial' ? 'ph-fill ph-warning' : 'ph-fill ph-x-circle'"></i>
+                                                            <span x-text="rule.mapping_status === 'mapped' ? '완료' : rule.mapping_status === 'partial' ? '부분' : '미매핑'"></span>
+                                                        </span>
+                                                    </td>
+                                                    <td class="px-4 py-3 text-center">
+                                                        <span x-show="rule.is_common" class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-purple-100 text-purple-600" title="공통 규칙">
+                                                            <i class="ph-fill ph-check-circle text-lg"></i>
+                                                        </span>
+                                                        <span x-show="!rule.is_common" class="text-slate-200">
+                                                            <i class="ph ph-minus text-lg"></i>
+                                                        </span>
+                                                    </td>
+                                                    <td class="px-4 py-3">
+                                                        <span class="text-xs bg-slate-100 px-2 py-1 rounded" x-text="rule.sheet_name"></span>
+                                                    </td>
+                                                    <td class="px-4 py-3 font-medium text-slate-800" x-text="rule.field_name"></td>
+                                                    <td class="px-4 py-3 text-slate-600 max-w-[250px]">
+                                                        <div class="truncate" x-text="rule.rule_text" :title="rule.rule_text"></div>
+                                                    </td>
+                                                    <td class="px-4 py-3">
+                                                        <span x-show="rule.ai_rule_type" class="text-xs bg-primary-100 text-primary-700 px-2 py-1 rounded" x-text="rule.ai_rule_type"></span>
+                                                        <span x-show="!rule.ai_rule_type" class="text-xs text-slate-400">-</span>
+                                                    </td>
+                                                    <td class="px-4 py-3 text-xs text-slate-500 max-w-[150px]">
+                                                        <div class="truncate" x-text="rule.ai_parameters ? JSON.stringify(rule.ai_parameters) : '-'" :title="rule.ai_parameters ? JSON.stringify(rule.ai_parameters) : ''"></div>
+                                                    </td>
+                                                    <td class="px-4 py-3">
+                                                        <div x-show="rule.ai_confidence_score" class="flex items-center gap-1">
+                                                            <div class="w-12 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                                                <div class="h-full rounded-full transition-all"
+                                                                     :class="rule.ai_confidence_score >= 0.8 ? 'bg-green-500' : rule.ai_confidence_score >= 0.5 ? 'bg-amber-500' : 'bg-red-500'"
+                                                                     :style="'width: ' + (rule.ai_confidence_score * 100) + '%'"></div>
+                                                            </div>
+                                                            <span class="text-xs" x-text="Math.round(rule.ai_confidence_score * 100) + '%'"></span>
+                                                        </div>
+                                                        <span x-show="!rule.ai_confidence_score" class="text-xs text-slate-400">-</span>
+                                                    </td>
+                                                    <td class="px-4 py-3">
+                                                        <div class="flex items-center gap-1">
+                                                            <button @click="openMappingEditor(rule)" class="p-1.5 text-slate-500 hover:text-primary-600 hover:bg-primary-50 rounded transition-colors" title="편집">
+                                                                <i class="ph ph-pencil-simple"></i>
+                                                            </button>
+                                                            <button @click="deleteRule(rule.id)" class="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="삭제">
+                                                                <i class="ph ph-trash"></i>
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            </template>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div x-show="getFilteredMappingSheets().length === 0" class="p-8 text-center text-slate-400">
+                                <i class="ph ph-funnel text-3xl mb-2"></i>
+                                <p>필터 조건에 맞는 규칙이 없습니다</p>
+                            </div>
+                        </div>
+
+                        <!-- Navigation Buttons -->
+                        <div class="flex justify-between">
+                            <button @click="ruleManagementStep = 1" class="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors flex items-center gap-2">
+                                <i class="ph ph-arrow-left"></i>
+                                <span>파일 선택으로</span>
+                            </button>
+                            <button @click="downloadRuleFile(selectedRuleFile, ruleMappings?.file_name)" class="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors flex items-center gap-2">
+                                <i class="ph ph-download-simple"></i>
+                                <span>규칙 파일 다운로드</span>
+                            </button>
+                        </div>
+                    </div>
+
                 </div>
 
                 <!-- Rule Edit Modal -->
@@ -1220,6 +1584,263 @@
                 </div>
                 </template>
 
+                <!-- Mapping Editor Modal (NEW) -->
+                <div x-show="editingMapping" x-cloak class="fixed inset-0 bg-black/50 z-[62] flex items-center justify-center p-4" @click.self="editingMapping = null">
+                    <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto" @click.stop>
+                        <div class="flex items-center justify-between mb-6">
+                            <h3 class="text-xl font-bold text-slate-900 flex items-center gap-2">
+                                <i class="ph-fill ph-link text-primary-600"></i>
+                                규칙 매핑 편집
+                            </h3>
+                            <button @click="editingMapping = null" class="text-slate-400 hover:text-slate-600">
+                                <i class="ph ph-x text-xl"></i>
+                            </button>
+                        </div>
+
+                        <template x-if="editingMapping">
+                            <div class="space-y-4">
+                                <!-- Original Rule Info (Editable) -->
+                                <div class="bg-slate-50 rounded-lg p-4">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <div class="text-sm font-medium text-slate-700 flex items-center gap-2">
+                                            <i class="ph ph-file-text text-slate-500"></i>
+                                            원본 규칙 정보
+                                        </div>
+                                        <button @click="reinterpretSingleRule()"
+                                                :disabled="reinterpretingRule"
+                                                class="px-3 py-1.5 text-xs bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-lg transition-colors flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                title="원본 규칙을 기반으로 AI가 다시 해석합니다">
+                                            <i class="ph ph-arrows-clockwise" :class="reinterpretingRule && 'animate-spin'"></i>
+                                            <span x-text="reinterpretingRule ? '재해석 중...' : '이 규칙 재해석'"></span>
+                                        </button>
+                                    </div>
+                                    <div class="space-y-3">
+                                        <div class="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label class="text-xs text-slate-500 mb-1 block">시트명</label>
+                                                <select x-model="editingMapping.sheet_name" class="w-full px-2 py-1.5 text-sm border border-slate-300 rounded bg-white focus:ring-2 focus:ring-primary-500">
+                                                    <template x-for="sheet in ruleMappings?.sheets || []" :key="sheet.sheet_name">
+                                                        <option :value="sheet.sheet_name" x-text="sheet.sheet_name"></option>
+                                                    </template>
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label class="text-xs text-slate-500 mb-1 block">위치 (행/열)</label>
+                                                <div class="flex items-center gap-1">
+                                                    <input type="number" x-model="editingMapping.row_number" class="w-16 px-2 py-1.5 text-sm border border-slate-300 rounded focus:ring-2 focus:ring-primary-500" placeholder="행">
+                                                    <span class="text-slate-400 text-sm">행</span>
+                                                    <input type="text" x-model="editingMapping.column_letter" class="w-12 px-2 py-1.5 text-sm border border-slate-300 rounded focus:ring-2 focus:ring-primary-500 uppercase" placeholder="열" maxlength="2">
+                                                    <span class="text-slate-400 text-sm">열</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="flex items-center gap-4">
+                                            <div class="flex-1">
+                                                <label class="text-xs text-slate-500 mb-1 block">필드명</label>
+                                                <input type="text" x-model="editingMapping.field_name" class="w-full px-2 py-1.5 text-sm border border-slate-300 rounded focus:ring-2 focus:ring-primary-500" placeholder="예: 성명">
+                                            </div>
+                                            <div class="flex items-center pt-5">
+                                                <label class="flex items-center gap-2 cursor-pointer">
+                                                    <input type="checkbox" x-model="editingMapping.is_common" class="w-4 h-4 text-primary-600 rounded border-slate-300 focus:ring-primary-500">
+                                                    <span class="text-sm text-slate-700 font-medium">공통 규칙 적용</span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label class="text-xs text-slate-500 mb-1 block">규칙 원문 (자연어)</label>
+                                            <textarea x-model="editingMapping.rule_text" class="w-full px-2 py-1.5 text-sm border border-slate-300 rounded focus:ring-2 focus:ring-primary-500 h-20" placeholder="예: 필수 입력, YYYYMMDD 형식"></textarea>
+                                            <p class="text-xs text-slate-400 mt-1">규칙 원문을 수정한 후 "이 규칙 재해석"을 클릭하면 AI가 새로운 해석을 생성합니다</p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- AI Interpretation Settings -->
+                                <div class="border border-primary-200 bg-primary-50/30 rounded-lg p-4">
+                                    <div class="flex items-center gap-2 text-primary-700 font-bold mb-4">
+                                        <i class="ph-fill ph-magic-wand"></i>
+                                        AI 해석 설정 (검증에 사용됨)
+                                    </div>
+
+                                    <div class="space-y-4">
+                                        <!-- Rule Type Selection -->
+                                        <div>
+                                            <label class="block text-sm font-medium text-slate-700 mb-2">검증 유형 <span class="text-red-500">*</span></label>
+                                            <select x-model="editingMapping.ai_rule_type" class="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-primary-500">
+                                                <option value="">선택하세요...</option>
+                                                <template x-for="type in ruleMappings?.available_rule_types || []" :key="type.value">
+                                                    <option :value="type.value" x-text="type.label"></option>
+                                                </template>
+                                            </select>
+                                            <p class="text-xs text-slate-500 mt-1" x-show="editingMapping.ai_rule_type"
+                                               x-text="ruleMappings?.available_rule_types?.find(t => t.value === editingMapping.ai_rule_type)?.description"></p>
+                                        </div>
+
+                                        <!-- Parameters based on type -->
+                                        <div x-show="editingMapping.ai_rule_type">
+                                            <label class="block text-sm font-medium text-slate-700 mb-2">파라미터 설정</label>
+
+                                            <!-- Required: no params needed -->
+                                            <div x-show="editingMapping.ai_rule_type === 'required'" class="text-sm text-slate-500 bg-slate-50 p-3 rounded">
+                                                필수 입력 검증은 추가 파라미터가 필요하지 않습니다.
+                                            </div>
+
+                                            <!-- No Duplicates: no params needed -->
+                                            <div x-show="editingMapping.ai_rule_type === 'no_duplicates'" class="text-sm text-slate-500 bg-slate-50 p-3 rounded">
+                                                중복 검증은 추가 파라미터가 필요하지 않습니다.
+                                            </div>
+
+                                            <!-- Format: regex or allowed_values -->
+                                            <div x-show="editingMapping.ai_rule_type === 'format'" class="space-y-3">
+                                                <div>
+                                                    <label class="text-xs text-slate-600">형식 유형</label>
+                                                    <select x-model="editingMapping._formatType" @change="updateFormatParams()" class="w-full mt-1 px-2 py-1.5 text-sm border border-slate-300 rounded bg-white">
+                                                        <option value="date">날짜 형식 (YYYYMMDD)</option>
+                                                        <option value="allowed">허용값 목록</option>
+                                                        <option value="regex">정규식 패턴</option>
+                                                    </select>
+                                                </div>
+                                                <div x-show="editingMapping._formatType === 'date'">
+                                                    <label class="text-xs text-slate-600">날짜 형식</label>
+                                                    <select x-model="editingMapping._dateFormat" @change="updateFormatParams()" class="w-full mt-1 px-2 py-1.5 text-sm border border-slate-300 rounded bg-white">
+                                                        <option value="YYYYMMDD">YYYYMMDD (예: 20250101)</option>
+                                                        <option value="YYYY-MM-DD">YYYY-MM-DD (예: 2025-01-01)</option>
+                                                    </select>
+                                                </div>
+                                                <div x-show="editingMapping._formatType === 'allowed'">
+                                                    <label class="text-xs text-slate-600">허용값 (쉼표로 구분)</label>
+                                                    <input type="text" x-model="editingMapping._allowedValues" @input="updateFormatParams()"
+                                                           class="w-full mt-1 px-2 py-1.5 text-sm border border-slate-300 rounded" placeholder="예: M, F 또는 1, 2">
+                                                </div>
+                                                <div x-show="editingMapping._formatType === 'regex'">
+                                                    <label class="text-xs text-slate-600">정규식 패턴</label>
+                                                    <input type="text" x-model="editingMapping._regexPattern" @input="updateFormatParams()"
+                                                           class="w-full mt-1 px-2 py-1.5 text-sm border border-slate-300 rounded font-mono" placeholder="예: ^[0-9]{8}$">
+                                                </div>
+                                            </div>
+
+                                            <!-- Range: min/max -->
+                                            <div x-show="editingMapping.ai_rule_type === 'range'" class="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <label class="text-xs text-slate-600">최소값</label>
+                                                    <input type="number" x-model="editingMapping._minValue" @input="updateRangeParams()"
+                                                           class="w-full mt-1 px-2 py-1.5 text-sm border border-slate-300 rounded" placeholder="예: 0">
+                                                </div>
+                                                <div>
+                                                    <label class="text-xs text-slate-600">최대값</label>
+                                                    <input type="number" x-model="editingMapping._maxValue" @input="updateRangeParams()"
+                                                           class="w-full mt-1 px-2 py-1.5 text-sm border border-slate-300 rounded" placeholder="예: 100">
+                                                </div>
+                                            </div>
+
+                                            <!-- Date Logic -->
+                                            <div x-show="editingMapping.ai_rule_type === 'date_logic'" class="space-y-3">
+                                                <div>
+                                                    <label class="text-xs text-slate-600">비교 필드</label>
+                                                    <input type="text" x-model="editingMapping._compareField" @input="updateDateLogicParams()"
+                                                           class="w-full mt-1 px-2 py-1.5 text-sm border border-slate-300 rounded" placeholder="예: 생년월일">
+                                                </div>
+                                                <div>
+                                                    <label class="text-xs text-slate-600">비교 연산자</label>
+                                                    <select x-model="editingMapping._dateOperator" @change="updateDateLogicParams()" class="w-full mt-1 px-2 py-1.5 text-sm border border-slate-300 rounded bg-white">
+                                                        <option value="greater_than">이후 (>)</option>
+                                                        <option value="less_than">이전 (<)</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+
+                                            <!-- Custom: raw JSON -->
+                                            <div x-show="editingMapping.ai_rule_type === 'custom' || editingMapping.ai_rule_type === 'cross_field'">
+                                                <label class="text-xs text-slate-600">파라미터 (JSON)</label>
+                                                <textarea x-model="editingMapping._rawParams" @input="updateCustomParams()"
+                                                          class="w-full mt-1 px-2 py-1.5 text-sm font-mono border border-slate-300 rounded h-20" placeholder='{"key": "value"}'></textarea>
+                                            </div>
+
+                                            <!-- Composite: Multiple validations -->
+                                            <div x-show="editingMapping.ai_rule_type === 'composite'" class="space-y-3">
+                                                <div class="flex items-center justify-between">
+                                                    <span class="text-xs text-slate-600">복합 검증 조건</span>
+                                                    <button @click="addCompositeValidation()" type="button"
+                                                            class="px-2 py-1 text-xs bg-green-100 text-green-700 hover:bg-green-200 rounded transition-colors flex items-center gap-1">
+                                                        <i class="ph ph-plus"></i> 조건 추가
+                                                    </button>
+                                                </div>
+
+                                                <!-- Validation List -->
+                                                <div class="space-y-2 max-h-60 overflow-y-auto">
+                                                    <template x-for="(v, vIdx) in editingMapping._validations || []" :key="vIdx">
+                                                        <div class="border border-slate-200 rounded-lg p-3 bg-white">
+                                                            <div class="flex items-center justify-between mb-2">
+                                                                <span class="text-xs font-medium text-slate-700" x-text="'검증 #' + (vIdx + 1)"></span>
+                                                                <button @click="removeCompositeValidation(vIdx)" type="button"
+                                                                        class="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors">
+                                                                    <i class="ph ph-x text-sm"></i>
+                                                                </button>
+                                                            </div>
+                                                            <div class="grid grid-cols-2 gap-2">
+                                                                <div>
+                                                                    <select x-model="v.type" @change="updateCompositeParams()"
+                                                                            class="w-full px-2 py-1 text-xs border border-slate-300 rounded bg-white">
+                                                                        <option value="required">필수 입력</option>
+                                                                        <option value="format">형식 검증</option>
+                                                                        <option value="range">범위 검증</option>
+                                                                        <option value="no_duplicates">중복 불가</option>
+                                                                    </select>
+                                                                </div>
+                                                                <div x-show="v.type === 'format'">
+                                                                    <input type="text" x-model="v._formatValue" @input="updateCompositeParams()"
+                                                                           class="w-full px-2 py-1 text-xs border border-slate-300 rounded"
+                                                                           placeholder="YYYYMMDD 또는 M,F">
+                                                                </div>
+                                                                <div x-show="v.type === 'range'" class="col-span-2 grid grid-cols-2 gap-1">
+                                                                    <input type="number" x-model="v._minVal" @input="updateCompositeParams()"
+                                                                           class="w-full px-2 py-1 text-xs border border-slate-300 rounded" placeholder="최소">
+                                                                    <input type="number" x-model="v._maxVal" @input="updateCompositeParams()"
+                                                                           class="w-full px-2 py-1 text-xs border border-slate-300 rounded" placeholder="최대">
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </template>
+                                                </div>
+
+                                                <p x-show="!editingMapping._validations?.length" class="text-xs text-slate-400 text-center py-4">
+                                                    "조건 추가" 버튼을 클릭하여 검증 조건을 추가하세요
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        <!-- Error Message -->
+                                        <div>
+                                            <label class="block text-sm font-medium text-slate-700 mb-2">오류 메시지</label>
+                                            <input type="text" x-model="editingMapping.ai_error_message"
+                                                   class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                                   placeholder="검증 실패 시 표시될 메시지">
+                                            <p class="text-xs text-slate-500 mt-1">{field_name} 플레이스홀더를 사용하면 필드명으로 치환됩니다</p>
+                                        </div>
+
+                                        <!-- Confidence -->
+                                        <div>
+                                            <label class="block text-sm font-medium text-slate-700 mb-2">신뢰도</label>
+                                            <div class="flex items-center gap-3">
+                                                <input type="range" min="0" max="1" step="0.1" x-model="editingMapping.ai_confidence_score" class="flex-1">
+                                                <span class="text-sm font-mono w-12 text-right" x-text="(editingMapping.ai_confidence_score || 0).toFixed(1)"></span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Actions -->
+                                <div class="flex gap-3 justify-end pt-4 border-t border-slate-100">
+                                    <button @click="editingMapping = null" class="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">취소</button>
+                                    <button @click="saveMappingEdit()" :disabled="!editingMapping.ai_rule_type"
+                                            class="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-bold shadow-lg shadow-primary-200 disabled:bg-slate-300 disabled:shadow-none disabled:cursor-not-allowed">
+                                        저장하기
+                                    </button>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
                 <!-- Create Rule Modal -->
                 <div x-show="createRuleModalOpen" x-cloak class="fixed inset-0 bg-black/50 z-[65] flex items-center justify-center p-4" @click.self="createRuleModalOpen = false">
                     <div class="bg-white rounded-xl shadow-xl max-w-lg w-full p-6" @click.stop>
@@ -1255,6 +1876,16 @@
                                     <label class="block text-sm font-medium text-slate-700 mb-1">컬럼명 (필드명) <span class="text-red-500">*</span></label>
                                     <input type="text" x-model="newRule.column_name" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500" placeholder="예: 성명">
                                 </div>
+                            </div>
+
+                            <div class="flex items-center">
+                                <label class="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-slate-50 transition-colors w-full">
+                                    <input type="checkbox" x-model="newRule.is_common" class="w-4 h-4 text-green-600 rounded border-slate-300 focus:ring-green-500">
+                                    <div>
+                                        <span class="text-sm font-medium text-slate-800">공통 규칙으로 설정</span>
+                                        <p class="text-xs text-slate-500">체크 시 시트명과 관계없이 동일한 컬럼명을 가진 모든 시트에 적용됩니다.</p>
+                                    </div>
+                                </label>
                             </div>
 
                             <div>
@@ -1534,6 +2165,9 @@
                                                 <div class="flex-1 min-w-0">
                                                     <div class="flex items-center gap-2 mb-0.5">
                                                         <span class="font-bold text-slate-700 text-sm" x-text="rule.field_name"></span>
+                                                        <template x-if="rule.is_common">
+                                                            <span class="px-1.5 py-0.5 bg-purple-100 text-purple-700 text-[10px] font-bold rounded border border-purple-200">공통</span>
+                                                        </template>
                                                         <span class="text-xs text-slate-400 font-mono" x-text="'ID: ' + rule.id.substring(0,8)"></span>
                                                     </div>
                                                     <div class="text-sm text-slate-600" x-text="rule.rule_text"></div>
@@ -1594,6 +2228,7 @@
                 frontendVersion: 'Front: v1.4.1 (2025-01-13)',
                 backendVersion: 'Back: Checking...',
                 selectedSheet: null, // 현재 선택된 시트
+                dashboardTab: 'analysis', // 'analysis' or 'fix'
 
                 // Feedback State
                 feedbackModalOpen: false,
@@ -1618,7 +2253,16 @@
                 editingRule: null,
                 editingRuleParamsJson: '{}',
                 paramsValid: true,
-                
+
+                // Rule Mapping State (NEW)
+                ruleMappings: null,
+                ruleMappingsLoading: false,
+                selectedMappingSheet: 'all',
+                mappingFilterStatus: 'all',  // 'all', 'mapped', 'unmapped', 'partial'
+                editingMapping: null,
+                reinterpretingRule: false,  // Single rule reinterpretation loading state
+                ruleManagementStep: 1,  // 1: 파일 선택/업로드, 2: 규칙 매핑 편집
+
                 // Create Rule State
                 createRuleModalOpen: false,
                 newRule: {
@@ -1631,7 +2275,8 @@
                 },
 
                 async createRule() {
-                    if (!this.ruleFileDetails || !this.ruleFileDetails.id) {
+                    const fileId = this.ruleFileDetails?.id || this.selectedRuleFile;
+                    if (!fileId) {
                         this.showToast('규칙을 추가할 상위 규칙 파일이 선택되지 않았습니다.', 'error');
                         return;
                     }
@@ -1644,10 +2289,9 @@
                     const payload = {
                         ...this.newRule,
                         sheet_name: actualSheetName,
-                        rule_file_id: this.ruleFileDetails.id,
-                        // row_number는 서버에서 처리하거나 기본값을 사용하도록 0 또는 null
-                        row_number: this.newRule.row_number || 0, 
-                        ai_parameters: {} // 기본값
+                        rule_file_id: fileId,
+                        row_number: this.newRule.row_number || 0,
+                        ai_parameters: {}
                     };
 
                     try {
@@ -1664,10 +2308,11 @@
 
                         this.showToast('새로운 규칙이 성공적으로 추가되었습니다.', 'success');
                         this.createRuleModalOpen = false;
-                        this.newRule = { sheet_name: '', column_name: '', rule_text: '', condition: '', ai_rule_type: 'required' };
-                        
+                        this.newRule = { sheet_name: '', custom_sheet_name: '', column_name: '', rule_text: '', condition: '', ai_rule_type: 'required' };
+
                         // 데이터 다시 로드
-                        this.viewRuleFileDetails(this.ruleFileDetails.id);
+                        this.viewRuleFileDetails(fileId);
+                        this.loadRuleFiles();
 
                     } catch (e) {
                         this.showToast(e.message, 'error');
@@ -1680,7 +2325,7 @@
                         return;
                     }
 
-                    if (!confirm('정말로 이 규칙을 영구적으로 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) {
+                    if (!confirm('정말로 이 규칙을 영구적으로 삭제하시겠습니까?\n\n이 작업은 되돌릴 수 없습니다.')) {
                         return;
                     }
 
@@ -1696,13 +2341,47 @@
                         }
 
                         this.showToast('규칙이 성공적으로 삭제되었습니다.', 'success');
-                        this.editingRule = null; // Close edit modal
                         
-                        // 데이터 다시 로드
-                        this.viewRuleFileDetails(this.ruleFileDetails.id);
+                        // --- UI Update Logic ---
+                        
+                        // 1. Update Rule File Details View
+                        if (this.ruleFileDetails && this.ruleFileDetails.sheets) {
+                            this.ruleFileDetails.sheets.forEach(sheet => {
+                                const index = sheet.sample_rules.findIndex(r => r.id === ruleId);
+                                if (index > -1) {
+                                    sheet.sample_rules.splice(index, 1);
+                                    sheet.rule_count--; 
+                                }
+                            });
+                            if (this.ruleFileDetails.total_rules_count) {
+                                this.ruleFileDetails.total_rules_count--;
+                            }
+                        }
+
+                        // 2. Update Rule Mappings View (Mapping Editor)
+                        if (this.ruleMappings && this.ruleMappings.sheets) {
+                            this.ruleMappings.sheets.forEach(sheet => {
+                                const index = sheet.rules.findIndex(r => r.id === ruleId);
+                                if (index > -1) {
+                                    // Update stats before removing
+                                    const status = sheet.rules[index].mapping_status;
+                                    if (status === 'mapped') this.ruleMappings.statistics.mapped_count--;
+                                    else if (status === 'partial') this.ruleMappings.statistics.partial_count--;
+                                    else this.ruleMappings.statistics.unmapped_count--;
+                                    
+                                    this.ruleMappings.statistics.total_rules--;
+                                    
+                                    // Remove rule
+                                    sheet.rules.splice(index, 1);
+                                }
+                            });
+                        }
+
+                        this.editingRule = null; // Close edit modal if open
 
                     } catch (e) {
                         this.showToast(e.message, 'error');
+                        console.error(e);
                     }
                 },
 
@@ -1745,16 +2424,36 @@
                 isDownloading: false,
                 fixPreview: { total: 0, success: 0, fail: 0, successRate: 0, items: [] },
 
-                // Navigation Items
-                navItems: [
-                    { id: 'upload', label: '파일 업로드', icon: 'ph-upload-simple' },
-                    { id: 'dashboard', label: '검증 대시보드', icon: 'ph-chart-pie-slice' },
-                    { id: 'report', label: '상세 리포트', icon: 'ph-table' },
-                    { id: 'ai_fix', label: 'AI 스마트 수정', icon: 'ph-magic-wand' },
-                    { id: 'statistics', label: '통계 분석', icon: 'ph-trend-up' },
-                    { id: 'rules', label: '규칙 관리', icon: 'ph-database' },
-                    // 'rule_detail' tab is hidden from sidebar
+                // Navigation Groups
+                navGroups: [
+                    {
+                        title: "검증 실행",
+                        items: [
+                            { id: 'rules', label: '규칙 관리', icon: 'ph-gear-six' },
+                            { id: 'upload', label: '파일 업로드 (검증)', icon: 'ph-upload-simple' }
+                        ]
+                    },
+                    {
+                        title: "결과 분석 및 수정",
+                        items: [
+                            { id: 'dashboard', label: '검증 대시보드', icon: 'ph-chart-pie-slice' },
+                            { id: 'report', label: '상세 리포트', icon: 'ph-table' },
+                            { id: 'ai_fix', label: 'AI 스마트 수정', icon: 'ph-magic-wand' }
+                        ]
+                    },
+                    {
+                        title: "시스템 관리",
+                        items: [
+                            { id: 'learning', label: 'AI 학습 현황', icon: 'ph-brain' },
+                            { id: 'statistics', label: '통계 분석', icon: 'ph-trend-up' },
+                            { id: 'settings', label: '설정 (AI 모델)', icon: 'ph-gear' }
+                        ]
+                    }
                 ],
+
+                get navItems() {
+                    return this.navGroups.flatMap(g => g.items);
+                },
 
                 // Toast State
                 toasts: [],
@@ -1925,17 +2624,53 @@
                                 sampleValues: [],
                                 ruleTypes: new Set(),
                                 messages: new Set(),
-                                expectedFormats: new Set()
+                                expectedFormats: new Set(),
+                                // Fix detection flags (scan all items)
+                                hasDatePattern: false,
+                                hasCommaNumber: false,
+                                hasGenderText: false
                             };
                         }
 
                         groupMap[key].count++;
+                        
+                        const valStr = String(error.actual_value || '').trim();
+                        const lowerCol = col.toLowerCase();
 
-                        // 샘플 값 수집 (최대 5개)
-                        if (groupMap[key].sampleValues.length < 5 && error.actual_value !== null && error.actual_value !== undefined) {
-                            const val = String(error.actual_value);
-                            if (!groupMap[key].sampleValues.includes(val)) {
-                                groupMap[key].sampleValues.push(val);
+                        // 1. Scan for Fixable Patterns (Date)
+                        if (!groupMap[key].hasDatePattern) {
+                            // 패턴 1: 구분자가 있는 날짜 (2023-1-1, 2023.01.01 등)
+                            if (/^\d{4}\s*[-\/\.]\s*\d{1,2}\s*[-\/\.]\s*\d{1,2}(\s*[\.])?([T\s]+\d{1,2}:\d{1,2}(:\d{1,2})?)?/.test(valStr)) {
+                                groupMap[key].hasDatePattern = true;
+                            }
+                            
+                            // 패턴 2: 날짜 관련 컬럼명이면 무조건 활성화 (안전장치)
+                            // 엑셀 시리얼 번호나 기타 변칙적인 경우도 일단 변환 시도를 허용함
+                            if (lowerCol.includes('date') || lowerCol.includes('일자') || 
+                                lowerCol.includes('입사일') || lowerCol.includes('생년월일') || 
+                                lowerCol.includes('퇴사일') || lowerCol.includes('기준일')) {
+                                groupMap[key].hasDatePattern = true;
+                            }
+                        }
+
+                        // 2. Scan for Comma Numbers
+                        if (!groupMap[key].hasCommaNumber) {
+                            if (/^[\d,]+$/.test(valStr.replace(/\s/g, '')) && valStr.includes(',')) {
+                                groupMap[key].hasCommaNumber = true;
+                            }
+                        }
+
+                        // 3. Scan for Gender Text
+                        if (!groupMap[key].hasGenderText) {
+                            if (['남', '여', '남자', '여자', 'M', 'F', 'male', 'female'].includes(valStr.toLowerCase())) {
+                                groupMap[key].hasGenderText = true;
+                            }
+                        }
+
+                        // 샘플 값 수집 (최대 20개)
+                        if (groupMap[key].sampleValues.length < 20 && error.actual_value !== null && error.actual_value !== undefined) {
+                            if (!groupMap[key].sampleValues.includes(valStr)) {
+                                groupMap[key].sampleValues.push(valStr);
                             }
                         }
 
@@ -1967,41 +2702,34 @@
                 },
 
                 // 자동 수정 가능 여부 판단
-                determineAutoFixability(columnError) {
-                    const messages = Array.from(columnError.messages).join(' ').toLowerCase();
-                    const expected = Array.from(columnError.expectedFormats).join(' ');
-                    const samples = columnError.sampleValues;
+                determineAutoFixability(group) {
+                    const messages = Array.from(group.messages).join(' ').toLowerCase();
+                    const colName = group.column.toLowerCase();
 
-                    // 날짜 형식 변환 (YYYY-MM-DD → YYYYMMDD)
-                    if (messages.includes('날짜') || messages.includes('date') || messages.includes('yyyymmdd')) {
-                        const hasDatePattern = samples.some(s => /^\d{4}[-\/\.]\d{2}[-\/\.]\d{2}$/.test(s));
-                        if (hasDatePattern) {
-                            return { autoFixable: true, fixDescription: '날짜 형식 변환 (YYYY-MM-DD → YYYYMMDD)', fixType: 'date_format' };
-                        }
+                    // 1. [최우선] 날짜 형식 패턴 감지 (전수 조사 결과 사용)
+                    if (group.hasDatePattern) {
+                        return { autoFixable: true, fixDescription: '날짜 형식 변환 (YYYY-MM-DD → YYYYMMDD)', fixType: 'date_format' };
                     }
 
-                    // 성별 코드 변환 (남→1, 여→2)
-                    if (messages.includes('성별') || messages.includes('허용값') || columnError.column.includes('성별')) {
-                        const hasGenderText = samples.some(s => ['남', '여', '남자', '여자', 'M', 'F', 'male', 'female'].includes(String(s).toLowerCase()));
-                        if (hasGenderText) {
+                    // 2. [최우선] 숫자 형식 패턴 감지
+                    if (group.hasCommaNumber && (messages.includes('숫자') || messages.includes('number') || messages.includes('금액') || colName.includes('금액') || colName.includes('wage') || colName.includes('pay'))) {
+                         return { autoFixable: true, fixDescription: '숫자 형식 변환 (콤마/공백 제거)', fixType: 'number_format' };
+                    }
+
+                    // 3. 성별 코드 변환
+                    if (group.hasGenderText || (messages.includes('성별') || messages.includes('허용값') || colName.includes('성별') || colName.includes('gender'))) {
+                        // Double check if any gender text exists (using flag)
+                        if (group.hasGenderText) {
                             return { autoFixable: true, fixDescription: '성별 코드 변환 (남→1, 여→2)', fixType: 'gender_code' };
                         }
                     }
 
-                    // 숫자 형식 변환 (콤마 제거, 문자 제거)
-                    if (messages.includes('숫자') || messages.includes('금액') || messages.includes('number')) {
-                        const hasCommaNumber = samples.some(s => /^[\d,]+$/.test(String(s).replace(/\s/g, '')));
-                        if (hasCommaNumber) {
-                            return { autoFixable: true, fixDescription: '숫자 형식 변환 (콤마/공백 제거)', fixType: 'number_format' };
-                        }
-                    }
-
-                    // 공백 제거
+                    // 4. 공백 제거
                     if (messages.includes('공백') || messages.includes('whitespace')) {
                         return { autoFixable: true, fixDescription: '앞뒤 공백 제거', fixType: 'trim' };
                     }
 
-                    // 중복, 필수값 누락 등은 자동 수정 불가
+                    // 5. 그 외
                     if (messages.includes('중복') || messages.includes('duplicate')) {
                         return { autoFixable: false, fixDescription: '중복 오류 (수동 확인 필요)', fixType: 'duplicate' };
                     }
@@ -2120,9 +2848,15 @@
                     const strValue = String(value).trim();
 
                     if (fixType === 'date_format') {
-                        // YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD → YYYYMMDD
-                        const match = strValue.match(/^(\d{4})[-\/.](\d{2})[-\/.](\d{2})$/);
-                        if (match) return `${match[1]}${match[2]}${match[3]}`;
+                        // YYYY. 1. 1 or 2023-01-01T00... -> YYYYMMDD
+                        // 숫자 부분만 추출하여 처리
+                        const match = strValue.match(/^(\d{4})\s*[-\/\.]\s*(\d{1,2})\s*[-\/\.]\s*(\d{1,2})/);
+                        if (match) {
+                            const year = match[1];
+                            const month = match[2].padStart(2, '0');
+                            const day = match[3].padStart(2, '0');
+                            return `${year}${month}${day}`;
+                        }
                         return null;
                     }
 
@@ -2227,10 +2961,28 @@
                     }
                 },
 
+                resetResults() {
+                    this.results = null;
+                    this.dbErrors = null;
+                    this.selectedSheet = null;
+                    this.fixSuggestions = [];
+                    this.selectedFixes = [];
+                    this.fixPreview = { total: 0, success: 0, fail: 0, successRate: 0, items: [] };
+                    this.selectedFixItems = []; // Clear manual fix selections
+                    this.searchQuery = '';
+                    
+                    // Destroy Charts
+                    if (window.myChart) {
+                        window.myChart.destroy();
+                        window.myChart = null;
+                    }
+                },
+
                 handleFileSelect(event, type) {
                     const file = event.target.files[0];
                     if (file) {
                         if (type === 'A') {
+                            this.resetResults(); // Reset on new file A
                             this.fileA = file;
                             this.autoStartValidation();
                         }
@@ -2243,6 +2995,7 @@
                     const file = event.dataTransfer.files[0];
                     if (file) {
                         if (type === 'A') {
+                            this.resetResults(); // Reset on new file A
                             this.fileA = file;
                             this.autoStartValidation();
                         }
@@ -2262,6 +3015,7 @@
                     if (!this.useSavedRule && !this.fileB) return;
                     if (this.useSavedRule && !this.selectedSavedRuleId) return;
 
+                    this.resetResults(); // Ensure reset before validation starts
                     this.isLoading = true;
                     const formData = new FormData();
                     formData.append('employee_file', this.fileA);
@@ -2481,6 +3235,17 @@
                 // =================================================================
 
                 statistics: null,
+                learningStats: null,
+
+                async loadLearningStats() {
+                    try {
+                        const response = await fetch('http://localhost:8000/learning/statistics');
+                        if (!response.ok) throw new Error('학습 통계 로딩 실패');
+                        this.learningStats = await response.json();
+                    } catch (e) {
+                        console.error('Learning stats error:', e);
+                    }
+                },
 
                 async loadStatistics() {
                     try {
@@ -2721,19 +3486,28 @@
                         this.ruleFileVersion = '1.0';
                         this.ruleFileUploadedBy = 'system';
                         this.ruleFileNotes = '';
-                        document.getElementById('ruleFileInput').value = '';
+
+                        // Reset file input (handle both old ID and new x-ref)
+                        const oldInput = document.getElementById('ruleFileInput');
+                        if (oldInput) oldInput.value = '';
+                        if (this.$refs.ruleFileInputNew) this.$refs.ruleFileInputNew.value = '';
 
                         // Reload rule files list and auto-select the newly uploaded file
                         await this.loadRuleFiles();
 
-                        // Auto-select the newly uploaded file
+                        // Auto-select the newly uploaded file and go to mapping review
                         if (result.id) {
                             this.selectedSavedRuleId = result.id;
+                            this.selectedRuleFile = result.id;
                             console.log(`Auto-selected newly uploaded rule file: ${result.id}`);
+
+                            // Auto-navigate to mapping review
+                            this.showToast('업로드 완료! 매핑 검토 화면으로 이동합니다.', 'success');
+                            await this.goToMappingReview();
                         }
                     } catch (e) {
                         console.error('Upload error:', e);
-                        alert(`업로드 실패: ${e.message}`);
+                        this.showToast(`업로드 실패: ${e.message}`, 'error');
                     } finally {
                         this.uploadingRuleFile = false;
                     }
@@ -2851,9 +3625,383 @@
                     }
                 },
 
+                // =================================================================
+                // Rule Mapping Functions (NEW)
+                // =================================================================
+
+                selectRuleFile(fileId) {
+                    this.selectedRuleFile = fileId;
+                    this.selectedSavedRuleId = fileId; // Also set for validation use
+                },
+
+                async goToMappingReview() {
+                    if (!this.selectedRuleFile) return;
+
+                    this.ruleManagementStep = 2;
+                    await this.loadRuleMappings(this.selectedRuleFile);
+                    await this.viewRuleFileDetails(this.selectedRuleFile);
+                },
+
+                async loadRuleMappings(fileId) {
+                    this.ruleMappingsLoading = true;
+                    this.ruleMappings = null;
+
+                    try {
+                        const response = await fetch(`http://localhost:8000/rules/files/${fileId}/mappings`);
+                        if (!response.ok) {
+                            const error = await response.json();
+                            throw new Error(error.detail?.message || '매핑 조회 실패');
+                        }
+
+                        this.ruleMappings = await response.json();
+                        console.log('Loaded mappings:', this.ruleMappings);
+                    } catch (e) {
+                        console.error('Load mappings error:', e);
+                        this.showToast(`매핑 조회 실패: ${e.message}`, 'error');
+                    } finally {
+                        this.ruleMappingsLoading = false;
+                    }
+                },
+
+                async reinterpretRulesAndRefresh() {
+                    if (!this.selectedRuleFile) return;
+                    await this.reinterpretRules(this.selectedRuleFile);
+                    await this.loadRuleMappings(this.selectedRuleFile);
+                },
+
+                getFilteredMappingSheets() {
+                    if (!this.ruleMappings?.sheets) return [];
+
+                    if (this.selectedMappingSheet === 'all') {
+                        return this.ruleMappings.sheets;
+                    }
+                    return this.ruleMappings.sheets.filter(s => s.sheet_name === this.selectedMappingSheet);
+                },
+
+                getFilteredRules(rules) {
+                    if (!rules) return [];
+
+                    if (this.mappingFilterStatus === 'all') {
+                        return rules;
+                    }
+                    return rules.filter(r => r.mapping_status === this.mappingFilterStatus);
+                },
+
+                openMappingEditor(rule) {
+                    // Deep copy to avoid modifying original
+                    this.editingMapping = JSON.parse(JSON.stringify(rule));
+
+                    // Initialize helper fields for parameter editing
+                    const params = this.editingMapping.ai_parameters || {};
+
+                    // Format type detection
+                    if (this.editingMapping.ai_rule_type === 'format') {
+                        if (params.format) {
+                            this.editingMapping._formatType = 'date';
+                            this.editingMapping._dateFormat = params.format;
+                        } else if (params.allowed_values) {
+                            this.editingMapping._formatType = 'allowed';
+                            this.editingMapping._allowedValues = params.allowed_values.join(', ');
+                        } else if (params.regex) {
+                            this.editingMapping._formatType = 'regex';
+                            this.editingMapping._regexPattern = params.regex;
+                        } else {
+                            this.editingMapping._formatType = 'date';
+                            this.editingMapping._dateFormat = 'YYYYMMDD';
+                        }
+                    }
+
+                    // Range params
+                    if (this.editingMapping.ai_rule_type === 'range') {
+                        this.editingMapping._minValue = params.min_value || '';
+                        this.editingMapping._maxValue = params.max_value || '';
+                    }
+
+                    // Date logic params
+                    if (this.editingMapping.ai_rule_type === 'date_logic') {
+                        this.editingMapping._compareField = params.compare_field || '';
+                        this.editingMapping._dateOperator = params.operator || 'greater_than';
+                    }
+
+                    // Custom/cross_field params
+                    if (this.editingMapping.ai_rule_type === 'custom' || this.editingMapping.ai_rule_type === 'cross_field') {
+                        this.editingMapping._rawParams = JSON.stringify(params, null, 2);
+                    }
+
+                    // Composite params - initialize _validations from params.validations
+                    if (this.editingMapping.ai_rule_type === 'composite') {
+                        const validations = params.validations || [];
+                        this.editingMapping._validations = validations.map(v => {
+                            const item = { type: v.type, parameters: v.parameters || {} };
+                            // Initialize helper fields
+                            if (v.type === 'format') {
+                                if (v.parameters?.format) {
+                                    item._formatValue = v.parameters.format;
+                                } else if (v.parameters?.allowed_values) {
+                                    item._formatValue = v.parameters.allowed_values.join(', ');
+                                } else if (v.parameters?.regex) {
+                                    item._formatValue = v.parameters.regex;
+                                }
+                            } else if (v.type === 'range') {
+                                item._minVal = v.parameters?.min_value || '';
+                                item._maxVal = v.parameters?.max_value || '';
+                            }
+                            return item;
+                        });
+                    } else {
+                        this.editingMapping._validations = [];
+                    }
+
+                    // Default confidence
+                    if (!this.editingMapping.ai_confidence_score) {
+                        this.editingMapping.ai_confidence_score = 1.0;
+                    }
+                },
+
+                updateFormatParams() {
+                    const type = this.editingMapping._formatType;
+
+                    if (type === 'date') {
+                        const fmt = this.editingMapping._dateFormat || 'YYYYMMDD';
+                        const regex = fmt === 'YYYYMMDD'
+                            ? '^(19|20)\\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\\d|3[01])$'
+                            : '^\\d{4}-\\d{2}-\\d{2}$';
+                        this.editingMapping.ai_parameters = { format: fmt, regex: regex };
+                    } else if (type === 'allowed') {
+                        const values = (this.editingMapping._allowedValues || '').split(',').map(v => v.trim()).filter(v => v);
+                        this.editingMapping.ai_parameters = { allowed_values: values };
+                    } else if (type === 'regex') {
+                        this.editingMapping.ai_parameters = { regex: this.editingMapping._regexPattern || '' };
+                    }
+                },
+
+                updateRangeParams() {
+                    this.editingMapping.ai_parameters = {};
+                    if (this.editingMapping._minValue !== '' && this.editingMapping._minValue !== null) {
+                        this.editingMapping.ai_parameters.min_value = parseFloat(this.editingMapping._minValue);
+                    }
+                    if (this.editingMapping._maxValue !== '' && this.editingMapping._maxValue !== null) {
+                        this.editingMapping.ai_parameters.max_value = parseFloat(this.editingMapping._maxValue);
+                    }
+                },
+
+                updateDateLogicParams() {
+                    this.editingMapping.ai_parameters = {
+                        compare_field: this.editingMapping._compareField || '',
+                        operator: this.editingMapping._dateOperator || 'greater_than'
+                    };
+                },
+
+                updateCustomParams() {
+                    try {
+                        this.editingMapping.ai_parameters = JSON.parse(this.editingMapping._rawParams || '{}');
+                    } catch (e) {
+                        // Invalid JSON, keep as is
+                    }
+                },
+
+                // Composite validation functions
+                addCompositeValidation() {
+                    if (!this.editingMapping._validations) {
+                        this.editingMapping._validations = [];
+                    }
+                    this.editingMapping._validations.push({
+                        type: 'required',
+                        parameters: {},
+                        _formatValue: '',
+                        _minVal: '',
+                        _maxVal: ''
+                    });
+                    this.updateCompositeParams();
+                },
+
+                removeCompositeValidation(idx) {
+                    if (this.editingMapping._validations) {
+                        this.editingMapping._validations.splice(idx, 1);
+                        this.updateCompositeParams();
+                    }
+                },
+
+                updateCompositeParams() {
+                    if (!this.editingMapping._validations) return;
+
+                    const validations = this.editingMapping._validations.map(v => {
+                        const result = {
+                            type: v.type,
+                            parameters: {},
+                            error_message: ''
+                        };
+
+                        if (v.type === 'required') {
+                            result.error_message = '{field_name}은(는) 필수 입력 항목입니다.';
+                        } else if (v.type === 'no_duplicates') {
+                            result.error_message = '{field_name}이(가) 중복되었습니다.';
+                        } else if (v.type === 'format') {
+                            const val = (v._formatValue || '').trim();
+                            if (val.toUpperCase() === 'YYYYMMDD') {
+                                result.parameters = {
+                                    format: 'YYYYMMDD',
+                                    regex: '^(19|20)\\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\\d|3[01])$'
+                                };
+                                result.error_message = '{field_name} 형식이 올바르지 않습니다. (YYYYMMDD)';
+                            } else if (val.includes(',')) {
+                                // Allowed values
+                                const allowed = val.split(',').map(s => s.trim()).filter(s => s);
+                                result.parameters = { allowed_values: allowed };
+                                result.error_message = '{field_name} 값이 올바르지 않습니다. (허용: ' + allowed.join(', ') + ')';
+                            } else if (val) {
+                                // Treat as regex
+                                result.parameters = { regex: val };
+                                result.error_message = '{field_name} 형식이 올바르지 않습니다.';
+                            }
+                        } else if (v.type === 'range') {
+                            if (v._minVal !== '' && v._minVal !== null) {
+                                result.parameters.min_value = parseFloat(v._minVal);
+                            }
+                            if (v._maxVal !== '' && v._maxVal !== null) {
+                                result.parameters.max_value = parseFloat(v._maxVal);
+                            }
+                            const msgs = [];
+                            if (result.parameters.min_value !== undefined) msgs.push(result.parameters.min_value + ' 이상');
+                            if (result.parameters.max_value !== undefined) msgs.push(result.parameters.max_value + ' 이하');
+                            result.error_message = '{field_name} 값은 ' + msgs.join(', ') + '이어야 합니다.';
+                        }
+
+                        return result;
+                    });
+
+                    this.editingMapping.ai_parameters = { validations: validations };
+                },
+
+                async saveMappingEdit() {
+                    if (!this.editingMapping || !this.editingMapping.ai_rule_type) {
+                        this.showToast('검증 유형을 선택하세요.', 'error');
+                        return;
+                    }
+
+                    try {
+                        // Prepare AI parameters based on type if not set
+                        let aiParams = this.editingMapping.ai_parameters || {};
+                        let summary = '사용자 수동 설정';
+
+                        if (this.editingMapping.ai_rule_type === 'required' || this.editingMapping.ai_rule_type === 'no_duplicates') {
+                            aiParams = {};
+                        }
+
+                        // Composite type - validate and set summary
+                        if (this.editingMapping.ai_rule_type === 'composite') {
+                            const validations = aiParams.validations || [];
+                            if (validations.length === 0) {
+                                this.showToast('복합 검증에는 최소 하나의 조건이 필요합니다.', 'error');
+                                return;
+                            }
+                            const types = validations.map(v => {
+                                if (v.type === 'required') return '필수';
+                                if (v.type === 'no_duplicates') return '중복불가';
+                                if (v.type === 'format') return '형식';
+                                if (v.type === 'range') return '범위';
+                                return v.type;
+                            });
+                            summary = '복합: ' + types.join(' + ');
+                        }
+
+                        const payload = {
+                            // Original rule info (editable now)
+                            sheet_name: this.editingMapping.sheet_name,
+                            field_name: this.editingMapping.field_name,
+                            rule_text: this.editingMapping.rule_text,
+                            row_number: parseInt(this.editingMapping.row_number) || null,
+                            column_letter: this.editingMapping.column_letter?.toUpperCase() || null,
+                            is_common: this.editingMapping.is_common || false, // Add is_common
+                            // AI interpretation settings
+                            ai_rule_type: this.editingMapping.ai_rule_type,
+                            ai_parameters: aiParams,
+                            ai_error_message: this.editingMapping.ai_error_message || `{field_name} 검증 실패`,
+                            ai_confidence_score: parseFloat(this.editingMapping.ai_confidence_score) || 1.0,
+                            ai_interpretation_summary: summary
+                        };
+
+                        const response = await fetch(`http://localhost:8000/rules/${this.editingMapping.id}/mapping`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (!response.ok) {
+                            const error = await response.json();
+                            throw new Error(error.detail?.message || '매핑 저장 실패');
+                        }
+
+                        this.showToast('규칙이 저장되었습니다.', 'success');
+                        this.editingMapping = null;
+
+                        // Refresh mappings
+                        await this.loadRuleMappings(this.selectedRuleFile);
+
+                    } catch (e) {
+                        console.error('Save mapping error:', e);
+                        this.showToast(`저장 실패: ${e.message}`, 'error');
+                    }
+                },
+
+                // Reinterpret a single rule based on its rule_text
+                async reinterpretSingleRule() {
+                    if (!this.editingMapping) return;
+
+                    this.reinterpretingRule = true;
+                    try {
+                        // First save the current original rule info
+                        const savePayload = {
+                            sheet_name: this.editingMapping.sheet_name,
+                            field_name: this.editingMapping.field_name,
+                            rule_text: this.editingMapping.rule_text,
+                            row_number: parseInt(this.editingMapping.row_number) || null,
+                            column_letter: this.editingMapping.column_letter?.toUpperCase() || null
+                        };
+
+                        // Save original rule info first
+                        await fetch(`http://localhost:8000/rules/${this.editingMapping.id}/mapping`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(savePayload)
+                        });
+
+                        // Then reinterpret
+                        const response = await fetch(`http://localhost:8000/rules/${this.editingMapping.id}/reinterpret`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+
+                        if (!response.ok) {
+                            const error = await response.json();
+                            throw new Error(error.detail?.message || '재해석 실패');
+                        }
+
+                        const result = await response.json();
+
+                        // Update the editingMapping with new AI interpretation
+                        this.editingMapping.ai_rule_type = result.ai_rule_type;
+                        this.editingMapping.ai_parameters = result.ai_parameters;
+                        this.editingMapping.ai_error_message = result.ai_error_message;
+                        this.editingMapping.ai_confidence_score = result.ai_confidence_score;
+
+                        // Re-initialize helper fields for parameter editing
+                        this.openMappingEditor(this.editingMapping);
+
+                        this.showToast('재해석이 완료되었습니다.', 'success');
+
+                    } catch (e) {
+                        console.error('Reinterpret error:', e);
+                        this.showToast(`재해석 실패: ${e.message}`, 'error');
+                    } finally {
+                        this.reinterpretingRule = false;
+                    }
+                },
+
                 openCreateRuleModal() {
                     this.newRule = {
                         sheet_name: '',
+                        custom_sheet_name: '',
                         column_name: '',
                         rule_text: '',
                         condition: '',
@@ -2864,44 +4012,6 @@
                         this.newRule.sheet_name = this.ruleFileDetails.sheets[0].sheet_name;
                     }
                     this.createRuleModalOpen = true;
-                },
-
-                async createRule() {
-                    if (!this.selectedRuleFile) return;
-
-                    try {
-                        const payload = {
-                            rule_file_id: this.selectedRuleFile,
-                            sheet_name: this.newRule.sheet_name,
-                            column_name: this.newRule.column_name,
-                            rule_text: this.newRule.rule_text,
-                            condition: this.newRule.condition,
-                            ai_rule_type: this.newRule.ai_rule_type,
-                            row_number: 0 // Default for manual entry
-                        };
-
-                        const response = await fetch('http://localhost:8000/rules/', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(payload)
-                        });
-
-                        if (!response.ok) {
-                            const error = await response.json();
-                            throw new Error(error.detail || '규칙 생성 실패');
-                        }
-
-                        this.showToast('새 규칙이 추가되었습니다.', 'success');
-                        this.createRuleModalOpen = false;
-                        
-                        // Refresh details
-                        this.viewRuleFileDetails(this.selectedRuleFile);
-                        // Refresh list (rule count updated)
-                        this.loadRuleFiles();
-
-                    } catch (e) {
-                        alert('오류: ' + e.message);
-                    }
                 },
 
                 // =================================================================
@@ -2966,45 +4076,6 @@
                         }
                     } catch (e) {
                         alert('오류: ' + e.message);
-                    }
-                },
-
-                async deleteRule(ruleId) {
-                    if (!confirm('정말로 이 규칙을 비활성화하시겠습니까? (DB에서 영구 삭제되지 않습니다)')) {
-                        return;
-                    }
-                    try {
-                        const response = await fetch(`http://localhost:8000/rules/${ruleId}`, {
-                            method: 'DELETE'
-                        });
-                        if (!response.ok) {
-                            const err = await response.json();
-                            throw new Error(err.detail || '규칙 비활성화에 실패했습니다.');
-                        }
-
-                        this.showToast('규칙이 성공적으로 비활성화되었습니다.', 'success');
-                        
-                        // --- START NEW LOGIC for immediate UI update ---
-                        if (this.ruleFileDetails && this.ruleFileDetails.sheets) {
-                            this.ruleFileDetails.sheets.forEach(sheet => {
-                                const index = sheet.sample_rules.findIndex(r => r.id === ruleId);
-                                if (index > -1) {
-                                    sheet.sample_rules.splice(index, 1);
-                                    sheet.rule_count--; // Decrement rule count for the sheet
-                                }
-                            });
-                            // Also decrement the total count
-                            if (this.ruleFileDetails.total_rules_count) {
-                                this.ruleFileDetails.total_rules_count--;
-                            }
-                        }
-                        // --- END NEW LOGIC ---
-
-                        this.editingRule = null; // Close the edit modal
-
-                    } catch (e) {
-                        this.showToast(e.message, 'error');
-                        console.error(e);
                     }
                 },
 

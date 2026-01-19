@@ -153,6 +153,87 @@ class AIRuleInterpreter:
         
         return local_suggestions
 
+    async def get_error_explanation(
+        self, 
+        error: 'ValidationError', 
+        provider: str = None
+    ) -> Dict[str, str]:
+        """
+        검증 오류에 대한 AI 기반의 설명과 권장 조치를 생성합니다.
+        """
+        target_provider = (provider or self.default_provider).lower()
+        use_cloud = self._check_provider_availability(target_provider)
+
+        if not use_cloud:
+            return {
+                "explanation": "AI 설명 기능을 사용할 수 없습니다. (설정 필요)",
+                "recommendation": "관리자에게 문의하여 AI Provider 설정을 확인하세요."
+            }
+        
+        try:
+            prompt = self._build_explanation_prompt(error)
+            ai_response_str = await self._call_cloud_ai(prompt, target_provider)
+            
+            # AI 응답 파싱
+            match = re.search(r'\{.*\}', ai_response_str, re.DOTALL)
+            if not match:
+                return {"explanation": ai_response_str, "recommendation": "AI가 생성한 설명을 참고하여 데이터를 직접 수정하세요."}
+
+            response_json = json.loads(match.group(0))
+
+            return {
+                "explanation": response_json.get("explanation", "AI가 설명을 생성하지 못했습니다."),
+                "recommendation": response_json.get("recommendation", "데이터를 직접 확인하고 수정하세요.")
+            }
+        except Exception as e:
+            print(f"[AI] Error getting explanation: {e}")
+            return {
+                "explanation": "오류 설명을 생성하는 중 문제가 발생했습니다.",
+                "recommendation": "오류 메시지를 참고하여 데이터를 수정하세요."
+            }
+
+    def _build_explanation_prompt(self, error: 'ValidationError') -> str:
+        """오류 설명을 생성하기 위한 프롬프트 구성"""
+        
+        kifrs_context = ""
+        # K-IFRS 관련 규칙 ID 형식 (예: KIFRS_CONSISTENCY_DATES) 에 따라 컨텍스트 추가
+        if error.rule_id.startswith("KIFRS_"):
+            rule_type = error.rule_id.split('_')[1].lower()
+            # 모델에 정의된 참조 정보와 매핑 시도
+            ref_key = next((key for key in KIFRS_1019_REFERENCES if rule_type in key), None)
+            if ref_key and ref_key in KIFRS_1019_REFERENCES:
+                 kifrs_context = f'''
+                 [Relevant K-IFRS 1019 Guideline: {ref_key}]
+                 Description: {KIFRS_1019_REFERENCES[ref_key]['description']}
+                 Key Points: {', '.join(KIFRS_1019_REFERENCES[ref_key]['key_points'])}
+                 '''
+
+        prompt = f"""
+        You are an expert accounting assistant specializing in K-IFRS 1019 (Defined Benefit Obligations).
+        A data validation error was found. Your task is to explain it clearly to a user in HR or accounting who may not be a data expert.
+
+        [Validation Error Details]
+        - Rule ID: "{error.rule_id}"
+        - Error Message: "{error.message}"
+        - Sheet: "{error.sheet}"
+        - Row: {error.row}
+        - Column: "{error.column}"
+        - Erroneous Value: "{error.actual_value}"
+        {kifrs_context}
+
+        [Your Task]
+        Provide a concise explanation and a recommended action in KOREAN.
+        1.  **Explanation**: Clearly explain WHY this is a problem from a practical, accounting perspective. Avoid technical jargon.
+        2.  **Recommendation**: Suggest a concrete, actionable next step for the user.
+
+        Output ONLY the following JSON structure:
+        {{
+            "explanation": "...",
+            "recommendation": "..."
+        }}
+        """
+        return prompt
+
     def _build_correction_prompt(self, errors: List[Dict[str, Any]], past_corrections: List[Dict[str, Any]]) -> str:
         """수정 제안을 위한 상세 RAG 프롬프트"""
         return f"""
@@ -461,6 +542,204 @@ class AIRuleInterpreter:
             ai_interpretation_summary=summary,
             confidence_score=confidence
         )
+
+    def interpret_rule(self, rule_text: str, column_name: str = "", use_local_parser: bool = True) -> Dict[str, Any]:
+        """
+        단일 규칙 텍스트를 해석하여 검증 설정 반환 (복합 조건 지원)
+
+        복합 조건이 감지되면 composite 타입으로 반환하고,
+        validations 배열에 각 검증 조건을 포함합니다.
+
+        Args:
+            rule_text: 규칙 원문 (자연어)
+            column_name: 필드명
+            use_local_parser: True면 로컬 파서 사용
+
+        Returns:
+            Dict: {
+                "rule_type": str,
+                "rule_id": str,
+                "parameters": dict,
+                "error_message": str,
+                "confidence_score": float,
+                "interpretation_summary": str
+            }
+        """
+        if not rule_text:
+            return {
+                "rule_type": "custom",
+                "rule_id": "RULE_EMPTY",
+                "parameters": {},
+                "error_message": "{field_name} 검증 실패",
+                "confidence_score": 0.5,
+                "interpretation_summary": "규칙 텍스트 없음"
+            }
+
+        # 복합 조건 감지를 위한 검증 목록
+        validations = []
+        summaries = []
+
+        rule_text_lower = rule_text.lower()
+
+        # ===== 1. 필수 입력 (Required) =====
+        if any(kw in rule_text for kw in ["공백", "필수", "빈값", "비어있으면"]) or "missing" in rule_text_lower:
+            validations.append({
+                "type": "required",
+                "parameters": {},
+                "error_message": "{field_name}은(는) 필수 입력 항목입니다."
+            })
+            summaries.append("필수값")
+
+        # ===== 2. 중복 검증 (No Duplicates) =====
+        # 날짜 형식 규칙에서 잘못 감지되지 않도록 주의
+        has_format_pattern = any(kw in rule_text for kw in ["형식", "format", "YYYYMMDD", "YYYY-MM-DD"])
+        if any(kw in rule_text for kw in ["중복", "유일"]) or "unique" in rule_text_lower:
+            if not has_format_pattern:  # 형식 규칙이 아닌 경우에만
+                validations.append({
+                    "type": "no_duplicates",
+                    "parameters": {},
+                    "error_message": "{field_name}이(가) 중복되었습니다."
+                })
+                summaries.append("중복불가")
+
+        # ===== 3. 날짜 형식 (Date Format) =====
+        if "yyyy" in rule_text_lower or "날짜" in rule_text or "date" in column_name.lower():
+            if "yyyymmdd" in rule_text_lower.replace("-", "").replace("/", ""):
+                validations.append({
+                    "type": "format",
+                    "parameters": {
+                        "format": "YYYYMMDD",
+                        "regex": r"^(19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$"
+                    },
+                    "error_message": "{field_name} 형식이 올바르지 않습니다. (YYYYMMDD)"
+                })
+                summaries.append("YYYYMMDD형식")
+            elif "yyyy-mm-dd" in rule_text_lower or "-" in rule_text:
+                validations.append({
+                    "type": "format",
+                    "parameters": {
+                        "format": "YYYY-MM-DD",
+                        "regex": r"^\d{4}-\d{2}-\d{2}$"
+                    },
+                    "error_message": "{field_name} 형식이 올바르지 않습니다. (YYYY-MM-DD)"
+                })
+                summaries.append("YYYY-MM-DD형식")
+
+        # ===== 4. 허용값 목록 (Allowed Values) =====
+        # 패턴: "M/F", "1:남, 2:여", "(허용: A, B, C)"
+        allowed_values = []
+
+        # 패턴1: "1:남자, 2:여자" 형태
+        code_pattern = re.findall(r'(\d+)\s*[:\-]\s*[가-힣]+', rule_text)
+        if code_pattern:
+            allowed_values = code_pattern
+
+        # 패턴2: 괄호 안의 값 "(M/F)" 또는 "(남/여)"
+        if not allowed_values:
+            paren_match = re.search(r'\(([^)]+)\)', rule_text)
+            if paren_match:
+                inner = paren_match.group(1)
+                if '/' in inner or ',' in inner:
+                    parts = re.split(r'[/,\s]+', inner)
+                    allowed_values = [p.strip() for p in parts if p.strip() and ':' not in p]
+
+        # 패턴3: "허용:" 또는 "allowed:" 뒤의 값
+        allowed_match = re.search(r'(?:허용|allowed)[:\s]*([^\.]+)', rule_text, re.IGNORECASE)
+        if allowed_match and not allowed_values:
+            parts = re.split(r'[,\s]+', allowed_match.group(1))
+            allowed_values = [p.strip() for p in parts if p.strip()]
+
+        if allowed_values:
+            validations.append({
+                "type": "format",
+                "parameters": {"allowed_values": allowed_values},
+                "error_message": "{field_name} 값이 올바르지 않습니다. (허용: " + ", ".join(allowed_values[:4]) + ")"
+            })
+            summaries.append(f"허용값({','.join(allowed_values[:3])})")
+
+        # ===== 5. 숫자 범위 (Range) =====
+        has_range = any(kw in rule_text for kw in ["이상", "이하", "초과", "미만"]) or \
+                    ">" in rule_text or "<" in rule_text
+
+        if has_range:
+            nums = re.findall(r'[\d.]+', rule_text)
+            range_params = {}
+            range_msgs = []
+
+            if nums:
+                if "이상" in rule_text or ">=" in rule_text:
+                    range_params["min_value"] = float(nums[0])
+                    range_msgs.append(f"{nums[0]} 이상")
+                if "이하" in rule_text or "<=" in rule_text:
+                    idx = 1 if "이상" in rule_text and len(nums) > 1 else 0
+                    if idx < len(nums):
+                        range_params["max_value"] = float(nums[idx])
+                        range_msgs.append(f"{nums[idx]} 이하")
+                if "초과" in rule_text or ">" in rule_text and ">=" not in rule_text:
+                    range_params["min_value"] = float(nums[0])
+                    range_params["exclusive_min"] = True
+                    range_msgs.append(f"{nums[0]} 초과")
+                if "미만" in rule_text or "<" in rule_text and "<=" not in rule_text:
+                    idx = 1 if len(nums) > 1 else 0
+                    range_params["max_value"] = float(nums[idx])
+                    range_params["exclusive_max"] = True
+                    range_msgs.append(f"{nums[idx]} 미만")
+
+            if range_params:
+                validations.append({
+                    "type": "range",
+                    "parameters": range_params,
+                    "error_message": "{field_name} 값은 " + ", ".join(range_msgs) + "이어야 합니다."
+                })
+                summaries.append("범위(" + ", ".join(range_msgs) + ")")
+
+        # ===== 6. 숫자 타입 검증 =====
+        is_numeric_rule = any(kw in rule_text for kw in ["금액", "숫자", "원", "수치", "정수"]) or \
+                          any(kw in rule_text_lower for kw in ["amount", "number", "numeric", "integer"])
+
+        # 이미 range 검증이 추가되지 않은 경우에만
+        if is_numeric_rule and not has_range:
+            validations.append({
+                "type": "range",
+                "parameters": {"numeric_only": True},
+                "error_message": "{field_name}은(는) 숫자여야 합니다."
+            })
+            summaries.append("숫자타입")
+
+        # ===== 결과 생성 =====
+        if len(validations) == 0:
+            # 해석 실패 - custom 규칙
+            return {
+                "rule_type": "custom",
+                "rule_id": "RULE_CUSTOM_001",
+                "parameters": {"description": rule_text},
+                "error_message": "{field_name} 검증 실패: " + rule_text[:50],
+                "confidence_score": 0.6,
+                "interpretation_summary": "사용자 정의 규칙 (수동 확인 필요)"
+            }
+        elif len(validations) == 1:
+            # 단일 검증
+            v = validations[0]
+            return {
+                "rule_type": v["type"],
+                "rule_id": f"RULE_{v['type'].upper()}_001",
+                "parameters": v["parameters"],
+                "error_message": v["error_message"],
+                "confidence_score": 0.9,
+                "interpretation_summary": summaries[0]
+            }
+        else:
+            # 복합 검증 (composite)
+            return {
+                "rule_type": "composite",
+                "rule_id": "RULE_COMPOSITE_001",
+                "parameters": {
+                    "validations": validations
+                },
+                "error_message": "{field_name} 검증 실패: " + ", ".join(summaries),
+                "confidence_score": 0.85,
+                "interpretation_summary": " + ".join(summaries)
+            }
 
     # =========================================================================
     # 🛠️ Local Fix Engine (Smart Cleaner)

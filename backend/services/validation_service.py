@@ -11,7 +11,7 @@ import io
 from database.rule_repository import RuleRepository
 from database.validation_repository import ValidationRepository
 from services.ai_cache_service import AICacheService
-from rule_engine import RuleEngine
+from rule_engine import RuleEngine, KIFRS_RuleEngine
 
 class ValidationService:
     """
@@ -157,9 +157,108 @@ class ValidationService:
         except Exception as e:
             raise ValueError(f"직원 데이터 파싱 실패: {str(e)}")
 
-        # Step 3: 공통 검증 로직 실행
+        # Step 3: 공통 규칙(is_common) 확장 적용
+        # 공통 규칙은 모든 시트를 검사하여 동일한 필드명이 있으면 자동으로 적용됨
+        print("[ValidationService] Expanding common rules...")
+        common_rules = [r for r in validation_rules if r.is_common]
+        expanded_rules = []
+
+        if common_rules:
+            for canonical_name, data in sheet_data_map.items():
+                sheet_columns = set(data["df"].columns)
+                display_name = data["display_name"]
+
+                for common_rule in common_rules:
+                    # 해당 시트에 공통 규칙의 필드가 존재하는지 확인
+                    if common_rule.field_name in sheet_columns:
+                        # 이미 해당 시트에 대해 정의된 규칙인지 확인 (중복 적용 방지 - 원본이 해당 시트인 경우)
+                        if common_rule.source.sheet_name == canonical_name:
+                            continue
+
+                        # 새 규칙 인스턴스 생성 (해당 시트용으로 복제)
+                        from copy import deepcopy
+                        new_rule = deepcopy(common_rule)
+                        new_rule.source.sheet_name = canonical_name
+                        # 규칙 ID에 시트명을 붙여서 유니크하게 만듦 (디버깅 용이)
+                        new_rule.rule_id = f"{common_rule.rule_id}_COMMON_{canonical_name}"
+                        new_rule.source.original_text += f" (공통규칙 적용: {display_name})"
+                        
+                        expanded_rules.append(new_rule)
+                        # print(f"  - Applied common rule '{common_rule.field_name}' to sheet '{display_name}'")
+
+            if expanded_rules:
+                print(f"[ValidationService] Added {len(expanded_rules)} expanded common rules")
+                validation_rules.extend(expanded_rules)
+
+        # Step 4: 공통 검증 로직 실행
         validation_res = await self.validate_sheets(sheet_data_map, validation_rules)
         engine_duration = (datetime.now() - start_time).total_seconds()
+
+        # =============================================================================
+        # K-IFRS 2단계 검증 실행
+        # =============================================================================
+        kifrs_errors = []
+        main_employee_df = None
+        main_sheet_name = None
+
+        # 1. 메인 직원 데이터 시트 찾기 ( heuristic: 필수 필드를 가장 많이 포함하는 시트)
+        required_kifrs_cols = {'employee_code', 'hire_date', 'birth_date', 'average_wage'}
+        best_match_score = 0
+        for canonical_name, data in sheet_data_map.items():
+            # df.columns를 소문자로 변환하여 비교
+            df_cols = {str(col).lower() for col in data["df"].columns}
+            match_score = len(required_kifrs_cols.intersection(df_cols))
+            if match_score > best_match_score:
+                best_match_score = match_score
+                main_employee_df = data["df"]
+                main_sheet_name = data["display_name"]
+
+        # 2. K-IFRS 검증 실행
+        if main_employee_df is not None and best_match_score >= 3: # 최소 3개 이상의 필수 컬럼이 있어야 실행
+            print(f"[ValidationService] Running K-IFRS Step 2 validation on sheet: {main_sheet_name}")
+            kifrs_engine = KIFRS_RuleEngine(main_employee_df)
+            
+            # TODO: reconciliation_params를 외부에서 받아와야 함
+            kifrs_errors = kifrs_engine.run_all_checks(reconciliation_params=None)
+            
+            if kifrs_errors:
+                print(f"[ValidationService] Found {len(kifrs_errors)} K-IFRS validation errors.")
+                # 에러에 시트 이름 추가
+                for error in kifrs_errors:
+                    error.sheet = main_sheet_name
+                
+                # 3. 결과 병합
+                # 기존 에러와 K-IFRS 에러 병합
+                all_errors = validation_res.errors + kifrs_errors
+                
+                # 요약 정보 업데이트
+                total_rows = validation_res.summary.total_rows
+                
+                # 시트별 오류 행 재계산
+                error_rows_set = set()
+                for err in all_errors:
+                    if err.sheet and err.row > 0:
+                        error_rows_set.add((err.sheet, err.row))
+
+                # 시트별 요약 업데이트
+                from collections import Counter
+                error_counts_by_sheet = Counter(err.sheet for err in all_errors)
+
+                if "sheets_summary" in validation_res.metadata:
+                    for sheet_name, summary in validation_res.metadata["sheets_summary"].items():
+                        summary["total_errors"] = error_counts_by_sheet.get(sheet_name, 0)
+
+                # 전체 요약 업데이트
+                validation_res.summary.total_errors = len(all_errors)
+                validation_res.summary.error_rows = len(error_rows_set)
+                validation_res.summary.valid_rows = validation_res.summary.total_rows - len(error_rows_set)
+                
+                # 상태 업데이트
+                validation_res.validation_status = "FAIL"
+                
+                # 그룹 재계산 및 에러 목록 업데이트
+                validation_res.errors = all_errors
+                validation_res.error_groups = group_errors(all_errors)
 
         # Step 4: 매칭 통계 추가
         file_record = await self.rule_repository.get_rule_file(UUID(rule_file_id))

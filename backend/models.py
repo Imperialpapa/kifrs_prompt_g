@@ -11,6 +11,32 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 
 
+# =============================================================================
+# Input Data Models
+# =============================================================================
+
+class EmployeeDataRow(BaseModel):
+    """
+    K-IFRS 검증 대상이 되는 직원 데이터 한 행의 구조화된 모델
+    - Excel 파일의 한 행에 해당하며, 파싱 후 초기 데이터를 담음
+    - 각 필드는 Optional로 정의하여, 유효성 검사 단계에서 누락/형식 오류를 잡아내도록 설계
+    """
+    row_number: int = Field(..., description="원본 Excel 파일의 행 번호")
+    employee_code: Optional[str] = Field(None, description="사원코드")
+    employee_name: Optional[str] = Field(None, description="사원명")
+    birth_date: Optional[str] = Field(None, description="생년월일 (YYYYMMDD)")
+    hire_date: Optional[str] = Field(None, description="입사일")
+    termination_date: Optional[str] = Field(None, description="퇴사일 (재직 시 빈 값)")
+    evaluation_date: Optional[str] = Field(None, description="평가기준일")
+    average_wage: Optional[float] = Field(None, description="평균임금 (최근 3개월)")
+    plan_type: Optional[str] = Field(None, description="제도유형 (DB/DC/퇴직금 등)")
+    payment_rate: Optional[float] = Field(None, description="지급배수/지급률")
+    first_hire_date_affiliated: Optional[str] = Field(None, description="관계사 전입 최초 입사일")
+    
+    # 추가적으로 원본 데이터를 그대로 저장할 필드
+    original_data: Dict[str, Any] = Field(default_factory=dict, description="파싱된 원본 행 데이터")
+
+
 class RuleSource(BaseModel):
     """
     규칙의 출처 추적
@@ -36,7 +62,8 @@ class ValidationRule(BaseModel):
         "range",
         "date_logic",
         "cross_field",
-        "custom"
+        "custom",
+        "composite"
     ] = Field(..., description="규칙 유형")
     
     # 규칙 파라미터 (타입별로 다름)
@@ -68,6 +95,8 @@ class ValidationRule(BaseModel):
         le=1.0,
         description="AI 해석의 신뢰도 (0~1)"
     )
+    
+    is_common: bool = Field(False, description="공통 규칙 여부")
 
 
 class RuleConflict(BaseModel):
@@ -350,6 +379,7 @@ class RuleUpdate(BaseModel):
     condition: Optional[str] = None
     note: Optional[str] = None
     is_active: Optional[bool] = None
+    is_common: Optional[bool] = None  # Common rule flag
     
     # AI-related fields (if user wants to manually adjust AI interpretation)
     ai_rule_type: Optional[str] = None
@@ -370,6 +400,7 @@ class RuleDetail(BaseModel):
     rule_text: str
     condition: Optional[str]
     note: Optional[str]
+    is_common: bool = False  # Common rule flag
     
     # AI Interpretation
     ai_rule_id: Optional[str]
@@ -383,6 +414,19 @@ class RuleDetail(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+
+class RuleCreate(BaseModel):
+    """Request model for creating a single rule manually"""
+    rule_file_id: str
+    sheet_name: str
+    row_number: int = 0
+    column_name: str  # mapped to field_name
+    rule_text: str
+    condition: Optional[str] = None
+    is_common: bool = False
+    ai_rule_type: Optional[str] = "custom"
+    ai_parameters: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
 
 class RuleSourceType(BaseModel):

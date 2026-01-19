@@ -44,6 +44,8 @@ from services.validation_service import ValidationService
 from services.feedback_service import FeedbackService
 from services.statistics_service import StatisticsService
 from services.fix_service import FixService
+from services.learning_service import LearningService
+from database.supabase_client import supabase
 from utils.excel_parser import parse_rules_from_excel, normalize_sheet_name, get_canonical_name
 from utils.common import group_errors
 
@@ -77,6 +79,7 @@ validation_service = ValidationService()
 feedback_service = FeedbackService()
 statistics_service = StatisticsService()
 fix_service = FixService()
+learning_service = LearningService(supabase_client=supabase)
 
 
 # =============================================================================
@@ -465,6 +468,233 @@ async def get_rule_file_details(file_id: str):
         )
 
 
+@app.get("/rules/files/{file_id}/mappings")
+async def get_rule_mappings(file_id: str):
+    """
+    규칙 파일의 AI 매핑 현황 상세 조회
+
+    원본 규칙과 AI 해석 결과를 비교하여 매핑 상태를 반환합니다.
+
+    Args:
+        file_id: 규칙 파일 UUID
+
+    Returns:
+        Dict: 매핑 통계 및 모든 규칙의 매핑 상세 정보
+    """
+    try:
+        print(f"[API] Getting rule mappings for file: {file_id}")
+        mappings = await rule_service.get_rule_mappings(file_id)
+
+        if not mappings:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "Rule file not found",
+                    "file_id": file_id
+                }
+            )
+
+        return mappings
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[API] Error getting rule mappings: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Failed to get rule mappings",
+                "message": str(e)
+            }
+        )
+
+
+@app.put("/rules/{rule_id}/mapping")
+async def update_rule_mapping(rule_id: str, mapping_data: dict):
+    """
+    개별 규칙의 원본 정보 및 AI 매핑 수동 설정
+
+    사용자가 원본 규칙 정보(시트명, 필드명, 규칙 원문 등)와
+    AI 해석을 수동으로 설정하거나 수정할 수 있습니다.
+
+    Args:
+        rule_id: 규칙 UUID
+        mapping_data: 규칙 및 AI 매핑 데이터
+            {
+                // 원본 규칙 정보 (optional)
+                "sheet_name": str,
+                "field_name": str,
+                "rule_text": str,
+                "row_number": int,
+                "column_letter": str,
+                // AI 매핑 데이터 (optional)
+                "ai_rule_type": str,
+                "ai_parameters": dict,
+                "ai_error_message": str,
+                "ai_confidence_score": float
+            }
+
+    Returns:
+        Dict: 업데이트 결과
+    """
+    try:
+        print(f"[API] Updating rule mapping: {rule_id}")
+
+        # AI 설정이 포함된 경우에만 수동 설정 처리
+        if "ai_rule_type" in mapping_data:
+            # 수동 설정임을 명시
+            mapping_data["ai_model_version"] = "manual"
+            mapping_data["ai_interpreted_at"] = datetime.now().isoformat()
+            mapping_data["ai_interpretation_summary"] = mapping_data.get("ai_interpretation_summary", "사용자 수동 설정")
+
+            # 신뢰도가 없으면 1.0 (수동 설정은 100% 신뢰)
+            if "ai_confidence_score" not in mapping_data:
+                mapping_data["ai_confidence_score"] = 1.0
+
+            # ai_rule_id 생성 (없으면)
+            if not mapping_data.get("ai_rule_id"):
+                import uuid
+                mapping_data["ai_rule_id"] = f"RULE_MANUAL_{str(uuid.uuid4())[:8].upper()}"
+
+        success = await rule_service.update_rule(rule_id, mapping_data)
+
+        if not success:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "Rule not found or update failed"}
+            )
+
+        # 학습: 사용자가 직접 확정한 패턴을 학습 시스템에 저장
+        # AI 설정이 포함되어 있고, 원본 텍스트/필드명이 있는 경우 학습
+        try:
+            # 필요한 정보가 mapping_data에 없으면 DB에서 조회
+            rule_text = mapping_data.get("rule_text")
+            field_name = mapping_data.get("field_name")
+            
+            if not rule_text or not field_name:
+                rule = await rule_service.get_rule(rule_id)
+                if rule:
+                    rule_text = rule_text or rule.get("rule_text")
+                    field_name = field_name or rule.get("field_name")
+
+            if "ai_rule_type" in mapping_data and rule_text and field_name:
+                # 비동기로 학습 데이터 저장 (사용자 응답 지연 방지 위해 await 사용 최소화 가능하나, 
+                # 여기서는 데이터 무결성을 위해 await 사용)
+                await learning_service.save_learned_pattern(
+                    rule_text=rule_text,
+                    field_name=field_name,
+                    ai_rule_type=mapping_data["ai_rule_type"],
+                    ai_parameters=mapping_data.get("ai_parameters", {}),
+                    ai_error_message=mapping_data.get("ai_error_message", ""),
+                    source_rule_id=rule_id,
+                    confidence_boost=0.1  # 사용자 확정은 신뢰도 부스트
+                )
+                print(f"[Learning] Learned pattern from rule: {rule_id}")
+        except Exception as e:
+            # 학습 실패가 API 응답을 막으면 안 됨
+            print(f"[Learning] Failed to learn pattern: {e}")
+
+        return {
+            "status": "success",
+            "message": "규칙이 성공적으로 업데이트되었습니다.",
+            "rule_id": rule_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[API] Error updating rule mapping: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Failed to update rule mapping",
+                "message": str(e)
+            }
+        )
+
+
+@app.post("/rules/{rule_id}/reinterpret")
+async def reinterpret_single_rule(rule_id: str, use_local_parser: bool = True):
+    """
+    개별 규칙의 rule_text를 기반으로 AI 재해석 수행
+
+    Args:
+        rule_id: 규칙 UUID
+        use_local_parser: True면 로컬 파서, False면 Cloud AI 사용
+
+    Returns:
+        Dict: 새로운 AI 해석 결과
+    """
+    try:
+        print(f"[API] Reinterpreting single rule: {rule_id}")
+
+        # 규칙 정보 조회
+        rule = await rule_service.get_rule(rule_id)
+        if not rule:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "Rule not found"}
+            )
+
+        # AI 재해석 수행 (Smart Interpret: 학습된 패턴 우선)
+        interpretation, source = await learning_service.smart_interpret(
+            rule_text=rule.get("rule_text", ""),
+            field_name=rule.get("field_name", ""),
+            ai_interpreter=ai_interpreter,
+            use_learning=True  # 학습된 패턴 활용
+        )
+        
+        # 로컬 파서 강제 사용 시 덮어쓰기 (단, 학습된 패턴이 정확히 매칭된 경우는 유지 가능하나, 
+        # 여기서는 use_local_parser 요청이 오면 보통 로컬 로직을 테스트하려는 의도이므로 
+        # 학습 패턴이 'ai' 소스인 경우에만 로컬 파서 로직이 적용되도록 ai_interpreter 내부에서 처리됨)
+        # 하지만 smart_interpret은 interpreter.interpret_rule을 호출하므로, 
+        # interpreter의 설정을 바꿔야 할 수도 있음.
+        # 현재 smart_interpret 구현상 ai_interpreter를 그대로 쓰므로,
+        # use_local_parser=True일 경우 AI 호출을 안 하게 됨.
+
+        # 해석 결과 업데이트
+        update_data = {
+            "ai_rule_type": interpretation.get("rule_type"),
+            "ai_rule_id": interpretation.get("rule_id"),
+            "ai_parameters": interpretation.get("parameters", {}),
+            "ai_error_message": interpretation.get("error_message", ""),
+            "ai_confidence_score": interpretation.get("confidence_score", 0.8),
+            "ai_interpretation_summary": interpretation.get("interpretation_summary", "") + f" (Source: {source})",
+            "ai_model_version": "local-parser" if use_local_parser else interpretation.get("model_version", "unknown"),
+            "ai_interpreted_at": datetime.now().isoformat()
+        }
+
+        success = await rule_service.update_rule(rule_id, update_data)
+        if not success:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": "Failed to save interpretation"}
+            )
+
+        return {
+            "status": "success",
+            "rule_id": rule_id,
+            "ai_rule_type": update_data["ai_rule_type"],
+            "ai_parameters": update_data["ai_parameters"],
+            "ai_error_message": update_data["ai_error_message"],
+            "ai_confidence_score": update_data["ai_confidence_score"],
+            "ai_interpretation_summary": update_data["ai_interpretation_summary"]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[API] Error reinterpreting rule: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Failed to reinterpret rule",
+                "message": str(e)
+            }
+        )
+
+
 @app.get("/rules/download/{file_id}")
 async def download_rule_file(file_id: str):
     """
@@ -754,6 +984,52 @@ async def validate_with_db_rules(
             employee_file_name=employee_file.filename
         )
         
+        # 학습: 검증 결과 피드백 기록
+        try:
+            # 1. 세션 상세 정보 조회 (오류 내역 확인용)
+            session_id = result.get("session_id")
+            session_details = await validation_service.get_session_details(session_id)
+            
+            if session_details:
+                errors = session_details.get("errors", [])
+                
+                # 규칙별 오류 횟수 집계
+                from collections import Counter
+                error_counts = Counter(e['rule_id'] for e in errors)
+                
+                # 2. 해당 파일의 모든 규칙 조회 (패턴 ID 확인용)
+                db_rules = await rule_service.repository.get_rules_by_file(UUID(rule_file_id), active_only=True)
+                
+                # 3. 각 규칙별로 피드백 기록
+                total_rows = result.get("summary", {}).get("total_rows", 0)
+                
+                for rule in db_rules:
+                    rule_id = str(rule['id'])
+                    pattern_id = None
+                    
+                    # AI Rule ID가 'LEARNED_'로 시작하면 패턴 ID로 간주? 
+                    # 아니면 rule table에 pattern_id 컬럼이 없으니 ai_rule_id를 활용.
+                    # LearningService.smart_interpret은 rule_id를 'LEARNED_{pattern_id}' 형식으로 반환했음.
+                    ai_rule_id = rule.get('ai_rule_id', '')
+                    if ai_rule_id and ai_rule_id.startswith('LEARNED_'):
+                         pattern_id = ai_rule_id.replace('LEARNED_', '')
+                    # 또는 AI 해석된 규칙이면(패턴이 아니더라도) 결과 기록을 통해 추후 학습 데이터로 활용 가능하지만
+                    # 현재 LearningService는 pattern_id가 있어야 피드백을 기록함 (DB 업데이트)
+                    
+                    if pattern_id:
+                        rule_error_count = error_counts.get(rule_id, 0)
+                        await learning_service.record_validation_result(
+                            rule_id=rule_id,
+                            pattern_id=pattern_id,
+                            total_rows=total_rows,
+                            error_count=rule_error_count
+                        )
+                print(f"[Learning] Recorded validation feedback for session: {session_id}")
+
+        except Exception as e:
+            print(f"[Learning] Failed to record feedback: {e}")
+            # 피드백 실패는 무시 (메인 로직에 영향 주지 않음)
+
         return result
 
     except ValueError as ve:
@@ -1133,6 +1409,42 @@ async def download_validation_results(validation_response: ValidationResponse):
                 "error": "Failed to generate Excel file",
                 "message": str(e)
             }
+        )
+
+
+# =============================================================================
+# Phase 9: Learning System Endpoints
+# =============================================================================
+
+@app.get("/learning/statistics")
+async def get_learning_statistics():
+    """
+    학습 시스템 통계 조회
+    """
+    try:
+        return await learning_service.get_learning_statistics()
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "Failed to get learning statistics", "message": str(e)}
+        )
+
+@app.get("/learning/patterns/{pattern_id}/effectiveness")
+async def get_pattern_effectiveness(pattern_id: str):
+    """
+    특정 학습 패턴의 효과성 분석
+    """
+    try:
+        result = await learning_service.get_pattern_effectiveness(pattern_id)
+        if "error" in result:
+             raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "Failed to get pattern effectiveness", "message": str(e)}
         )
 
 

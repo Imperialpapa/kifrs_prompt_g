@@ -289,7 +289,8 @@ class AICacheService:
                     error_message_template=rule.get('ai_error_message'),
                     source=source,
                     ai_interpretation_summary=rule.get('ai_interpretation_summary') or "",
-                    confidence_score=float(rule.get('ai_confidence_score') or 0.0)
+                    confidence_score=float(rule.get('ai_confidence_score') or 0.0),
+                    is_common=rule.get('is_common', False)  # Map is_common
                 )
 
                 validation_rules.append(validation_rule)

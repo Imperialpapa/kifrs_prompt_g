@@ -80,7 +80,10 @@ class RuleEngine:
         
         elif rule.rule_type == "custom":
             self._validate_custom(data, rule)
-        
+
+        elif rule.rule_type == "composite":
+            self._validate_composite(data, rule)
+
         else:
             raise ValueError(f"알 수 없는 규칙 타입: {rule.rule_type}")
     
@@ -374,7 +377,167 @@ class RuleEngine:
         # 예시: eval을 사용한 동적 검증 (실제로는 보안 고려 필요)
         # 여기서는 간단히 pass
         pass
-    
+
+    def _validate_composite(self, data: pd.DataFrame, rule: ValidationRule):
+        """
+        복합 검증 (Composite Validation)
+        - 여러 검증 조건을 순차적으로 적용
+        - parameters.validations 배열에 각 검증 조건 포함
+
+        validations 배열 구조:
+        [
+            {"type": "required", "parameters": {}, "error_message": "..."},
+            {"type": "format", "parameters": {"format": "YYYYMMDD", ...}, "error_message": "..."},
+            ...
+        ]
+        """
+        validations = rule.parameters.get("validations", [])
+
+        if not validations:
+            return
+
+        field = rule.field_name
+
+        # 컬럼 존재 여부 확인
+        if field not in data.columns:
+            # 컬럼이 없으면 required 검증만 실패로 처리
+            for v in validations:
+                if v.get("type") == "required":
+                    for idx in range(len(data)):
+                        self._add_error(
+                            row=idx + 2,
+                            column=field,
+                            rule=rule,
+                            message=v.get("error_message", f"필수 컬럼 '{field}'가 존재하지 않습니다."),
+                            actual_value=None
+                        )
+            return
+
+        # 각 행에 대해 모든 검증 조건 적용
+        for idx, value in enumerate(data[field]):
+            row_num = idx + 2  # Excel 행 번호
+
+            for v in validations:
+                v_type = v.get("type")
+                v_params = v.get("parameters", {})
+                v_error_msg = v.get("error_message", f"{field} 검증 실패")
+
+                # 1. Required 검증
+                if v_type == "required":
+                    if pd.isna(value) or (isinstance(value, str) and value.strip() == ""):
+                        self._add_error(
+                            row=row_num,
+                            column=field,
+                            rule=rule,
+                            message=v_error_msg,
+                            actual_value=value
+                        )
+                        # required 실패 시 다른 검증은 의미 없음
+                        break
+
+                # 빈 값이면 나머지 검증 스킵 (required 아닌 경우)
+                if pd.isna(value) or (isinstance(value, str) and value.strip() == ""):
+                    continue
+
+                str_value = str(value).strip()
+
+                # 2. Format 검증
+                if v_type == "format":
+                    is_valid = True
+
+                    # 정규식 검증
+                    if "regex" in v_params:
+                        import re
+                        if not re.match(v_params["regex"], str_value):
+                            is_valid = False
+
+                    # 허용값 목록 검증
+                    elif "allowed_values" in v_params:
+                        allowed = v_params["allowed_values"]
+                        if str_value not in allowed and value not in allowed:
+                            # 숫자로 변환해서도 체크
+                            try:
+                                if str(int(float(value))) not in [str(a) for a in allowed]:
+                                    is_valid = False
+                            except (ValueError, TypeError):
+                                is_valid = False
+
+                    if not is_valid:
+                        self._add_error(
+                            row=row_num,
+                            column=field,
+                            rule=rule,
+                            message=v_error_msg,
+                            actual_value=value
+                        )
+
+                # 3. Range 검증
+                elif v_type == "range":
+                    try:
+                        num_value = float(value)
+                        is_valid = True
+
+                        if "min_value" in v_params:
+                            min_val = v_params["min_value"]
+                            if v_params.get("exclusive_min"):
+                                if num_value <= min_val:
+                                    is_valid = False
+                            else:
+                                if num_value < min_val:
+                                    is_valid = False
+
+                        if "max_value" in v_params:
+                            max_val = v_params["max_value"]
+                            if v_params.get("exclusive_max"):
+                                if num_value >= max_val:
+                                    is_valid = False
+                            else:
+                                if num_value > max_val:
+                                    is_valid = False
+
+                        if not is_valid:
+                            self._add_error(
+                                row=row_num,
+                                column=field,
+                                rule=rule,
+                                message=v_error_msg,
+                                actual_value=value
+                            )
+                    except (ValueError, TypeError):
+                        # 숫자 변환 실패
+                        if v_params.get("numeric_only"):
+                            self._add_error(
+                                row=row_num,
+                                column=field,
+                                rule=rule,
+                                message=v_error_msg,
+                                actual_value=value
+                            )
+
+                # 4. No Duplicates 검증은 별도 처리 필요 (행 단위가 아닌 컬럼 전체 대상)
+
+        # No Duplicates 검증 (컬럼 전체 대상)
+        for v in validations:
+            if v.get("type") == "no_duplicates":
+                v_error_msg = v.get("error_message", f"{field}이(가) 중복되었습니다.")
+                seen = {}
+                for idx, value in enumerate(data[field]):
+                    if pd.isna(value) or (isinstance(value, str) and value.strip() == ""):
+                        continue
+
+                    str_value = str(value).strip()
+                    if str_value in seen:
+                        # 중복 발견
+                        self._add_error(
+                            row=idx + 2,
+                            column=field,
+                            rule=rule,
+                            message=v_error_msg,
+                            actual_value=value
+                        )
+                    else:
+                        seen[str_value] = idx + 2
+
     # =========================================================================
     # 유틸리티 메서드
     # =========================================================================
@@ -508,6 +671,196 @@ def validate_data(
         conflicts=[],  # 규칙 충돌은 AI 레이어에서 처리
         rules_applied=rules
     )
+
+
+# =============================================================================
+# K-IFRS 1019 검증 엔진 (2단계)
+# =============================================================================
+
+class KIFRS_RuleEngine:
+    """
+    K-IFRS 1019 관점의 논리 및 회계 검증 엔진
+    - 1단계 기본 검증을 통과한 데이터를 대상으로 심층 분석
+    """
+    
+    def __init__(self, data: pd.DataFrame):
+        self.data = data.copy()
+        self.errors: List[ValidationError] = []
+        self._preprocess_data()
+
+    def _preprocess_data(self):
+        """데이터 전처리 (날짜 변환, 숫자 변환 등)"""
+        date_cols = ['birth_date', 'hire_date', 'termination_date', 'first_hire_date_affiliated', 'evaluation_date']
+        for col in date_cols:
+            if col in self.data.columns:
+                # format을 지정하여 다양한 형식의 날짜 문자열을 파싱
+                self.data[col] = pd.to_datetime(self.data[col], errors='coerce', format='%Y%m%d')
+
+        numeric_cols = ['average_wage', 'payment_rate']
+        for col in numeric_cols:
+             if col in self.data.columns:
+                self.data[col] = pd.to_numeric(self.data[col], errors='coerce')
+    
+    def run_all_checks(self, reconciliation_params: Optional[Dict[str, Any]] = None) -> List[ValidationError]:
+        """K-IFRS 6대 검증 축을 모두 실행"""
+        self.errors = []
+        
+        self._check_completeness()
+        self._check_validity()
+        self._check_consistency()
+        if reconciliation_params:
+            self._check_reconciliation(reconciliation_params)
+        self._check_outliers()
+        self._check_roll_forward_skeleton() # 골격만 구현
+
+        return self.errors
+
+    def _add_kifrs_error(self, row: int, column: str, message: str, actual_value: Any, rule_id: str, expected: Optional[str] = None):
+        """K-IFRS 검증 오류 추가"""
+        error = ValidationError(
+            row=row,
+            column=column,
+            rule_id=rule_id,
+            message=message,
+            actual_value=str(actual_value),
+            expected=expected,
+            source_rule="K-IFRS 1019 Guideline"
+        )
+        self.errors.append(error)
+
+    # (1) 완전성 검증
+    def _check_completeness(self):
+        """필수 필드의 NULL/빈값 카운트 등"""
+        required_fields = ['employee_code', 'employee_name', 'hire_date', 'birth_date', 'average_wage']
+        for field in required_fields:
+            if field not in self.data.columns:
+                self._add_kifrs_error(row=0, column=field, message=f"필수 컬럼 '{field}'가 누락되었습니다.", actual_value="N/A", rule_id="KIFRS_COMPLETENESS_COL_MISSING")
+                continue
+
+            null_count = self.data[field].isnull().sum()
+            if null_count > 0:
+                 self._add_kifrs_error(
+                    row=0, # 특정 행이 아닌 전체에 대한 오류
+                    column=field,
+                    message=f"필수 필드 '{field}'에 {null_count}개의 누락된 값이 있습니다.",
+                    actual_value=f"{null_count} nulls",
+                    rule_id="KIFRS_COMPLETENESS_NULL"
+                )
+
+    # (2) 형식/유효성 검증
+    def _check_validity(self):
+        """날짜 유효성, 평균임금 > 0 등"""
+        if 'evaluation_date' in self.data.columns and not self.data['evaluation_date'].isnull().all():
+            eval_date = self.data['evaluation_date'].dropna().iloc[0]
+            if pd.notna(eval_date):
+                for col in ['birth_date', 'hire_date']:
+                    if col in self.data.columns:
+                        future_dates = self.data[self.data[col] > eval_date]
+                        for idx, row_data in future_dates.iterrows():
+                            self._add_kifrs_error(
+                                row=idx + 2, column=col,
+                                message=f"날짜({row_data[col].date()})가 평가기준일({eval_date.date()})보다 미래일 수 없습니다.",
+                                actual_value=row_data[col].date(), rule_id="KIFRS_VALIDITY_FUTURE_DATE"
+                            )
+
+        if 'average_wage' in self.data.columns:
+            invalid_wage = self.data[self.data['average_wage'] <= 0]
+            for idx, row_data in invalid_wage.iterrows():
+                self._add_kifrs_error(
+                    row=idx + 2, column='average_wage',
+                    message="평균임금은 0보다 커야 합니다.",
+                    actual_value=row_data['average_wage'], rule_id="KIFRS_VALIDITY_WAGE"
+                )
+
+    # (3) 논리 일관성 검증
+    def _check_consistency(self):
+        """입사일 <= 퇴사일 등"""
+        if 'hire_date' in self.data.columns and 'termination_date' in self.data.columns:
+            inconsistent_dates = self.data.dropna(subset=['hire_date', 'termination_date'])
+            inconsistent_dates = inconsistent_dates[inconsistent_dates['hire_date'] > inconsistent_dates['termination_date']]
+            for idx, row_data in inconsistent_dates.iterrows():
+                self._add_kifrs_error(
+                    row=idx + 2, column='termination_date',
+                    message=f"퇴사일({row_data['termination_date'].date()})이 입사일({row_data['hire_date'].date()})보다 빠릅니다.",
+                    actual_value=f"Hire: {row_data['hire_date'].date()}, Term: {row_data['termination_date'].date()}",
+                    rule_id="KIFRS_CONSISTENCY_DATES"
+                )
+
+        if 'first_hire_date_affiliated' in self.data.columns and 'hire_date' in self.data.columns:
+            inconsistent_first_hire = self.data.dropna(subset=['first_hire_date_affiliated', 'hire_date'])
+            inconsistent_first_hire = inconsistent_first_hire[inconsistent_first_hire['first_hire_date_affiliated'] > inconsistent_first_hire['hire_date']]
+            for idx, row_data in inconsistent_first_hire.iterrows():
+                self._add_kifrs_error(
+                    row=idx + 2, column='hire_date',
+                    message=f"현재 회사 입사일({row_data['hire_date'].date()})이 관계사 최초 입사일({row_data['first_hire_date_affiliated'].date()})보다 빠릅니다.",
+                    actual_value=f"First Hire: {row_data['first_hire_date_affiliated'].date()}, Current Hire: {row_data['hire_date'].date()}",
+                    rule_id="KIFRS_CONSISTENCY_FIRST_HIRE"
+                )
+    
+    # (4) 집계 리콘 검증
+    def _check_reconciliation(self, params: Dict[str, Any]):
+        """총 인원수, 총 평균임금 합계 등 비교"""
+        if 'total_employee_count' in params:
+            count_in_data = len(self.data)
+            count_from_source = params['total_employee_count']
+            if count_in_data != count_from_source:
+                self._add_kifrs_error(
+                    row=0, column='(Summary)',
+                    message=f"총 인원 수가 일치하지 않습니다. (데이터: {count_in_data}, 원천: {count_from_source})",
+                    actual_value=count_in_data, expected=str(count_from_source),
+                    rule_id="KIFRS_RECON_TOTAL_COUNT"
+                )
+
+        if 'total_average_wage' in params and 'average_wage' in self.data.columns:
+            sum_in_data = self.data['average_wage'].sum()
+            sum_from_source = params['total_average_wage']
+            tolerance = params.get('tolerance', 0.001) # 0.1%
+            if abs(sum_in_data - sum_from_source) / sum_from_source > tolerance:
+                self._add_kifrs_error(
+                    row=0, column='average_wage',
+                    message=f"총 평균임금 합계가 허용 오차({tolerance*100}%)를 벗어났습니다. (데이터 합계: {sum_in_data:,.0f}, 원천 합계: {sum_from_source:,.0f})",
+                    actual_value=f"{sum_in_data:,.0f}", expected=f"~{sum_from_source:,.0f}",
+                    rule_id="KIFRS_RECON_WAGE_SUM"
+                )
+
+    # (5) 이상치 탐지
+    def _check_outliers(self):
+        """평균±3표준편차를 벗어나는 임금 값 탐지"""
+        if 'average_wage' in self.data.columns and self.data['average_wage'].notna().sum() > 1:
+            wages = self.data['average_wage'].dropna()
+            mean = wages.mean()
+            std = wages.std()
+            lower_bound = mean - 3 * std
+            upper_bound = mean + 3 * std
+            
+            outliers = self.data[(self.data['average_wage'] < lower_bound) | (self.data['average_wage'] > upper_bound)]
+            
+            if not outliers.empty:
+                # Add a summary error
+                self._add_kifrs_error(
+                    row=0, column='average_wage',
+                    message=f"{len(outliers)}개의 임금 이상치(평균±3σ)가 탐지되었습니다. (범위: [{lower_bound:,.0f} ~ {upper_bound:,.0f}])",
+                    actual_value=f"{len(outliers)} outliers",
+                    expected=f"In range",
+                    rule_id="KIFRS_OUTLIER_WAGE_SUMMARY"
+                )
+                # Add row-specific errors
+                for idx, row_data in outliers.iterrows():
+                    self._add_kifrs_error(
+                        row=idx + 2, column='average_wage',
+                        message=f"평균임금 이상치(평균±3σ) 탐지됨.",
+                        actual_value=f"{row_data['average_wage']:,.0f}",
+                        expected=f"Range [{lower_bound:,.0f}, {upper_bound:,.0f}]",
+                        rule_id="KIFRS_OUTLIER_WAGE_ROW"
+                    )
+
+    # (6) 회계 리콘 (롤포워드)
+    def _check_roll_forward_skeleton(self):
+        """롤포워드 검증 함수 골격"""
+        # "전기말 부채 + 당기 서비스원가 + 순이자비용 - 지급액 ± 재측정 = 당기말 부채"
+        # 이 검증은 여러 데이터 소스가 필요하므로, 여기서는 골격만 만듭니다.
+        # 실제 구현 시에는 financial_data 같은 별도의 파라미터를 받아야 합니다.
+        pass
 
 
 # =============================================================================

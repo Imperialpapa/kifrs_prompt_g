@@ -332,6 +332,23 @@ class RuleRepository:
     # Rule Operations
     # =========================================================================
 
+    async def increment_rule_count(self, file_id: UUID) -> bool:
+        """Increment the total_rules_count for a file"""
+        try:
+            # Get current count
+            result = self.client.table('rule_files').select('total_rules_count').eq('id', str(file_id)).execute()
+            if not result.data:
+                return False
+            
+            current_count = result.data[0]['total_rules_count']
+            
+            # Update
+            self.client.table('rule_files').update({'total_rules_count': current_count + 1}).eq('id', str(file_id)).execute()
+            return True
+        except Exception as e:
+            print(f"[RuleRepo] Error incrementing rule count: {e}")
+            return False
+
     async def create_rules_batch(self, rules: List[Dict[str, Any]]) -> int:
         """
         Batch insert rules
@@ -351,6 +368,25 @@ class RuleRepository:
             return len(result.data) if result.data else 0
         except Exception as e:
             print(f"[RuleRepository] Error creating rules batch: {str(e)}")
+            raise
+
+    async def create_single_rule(self, rule_data: Dict[str, Any]) -> Dict:
+        """
+        Create a single rule record and return it.
+
+        Args:
+            rule_data: Dictionary with rule data.
+
+        Returns:
+            Dict: The created rule record including its ID.
+        """
+        try:
+            result = self.client.table('rules').insert(rule_data, returning='representation').execute()
+            if result.data and len(result.data) > 0:
+                return result.data[0]
+            raise Exception("Failed to create single rule: No data returned")
+        except Exception as e:
+            print(f"[RuleRepository] Error creating single rule: {str(e)}")
             raise
 
     async def get_rules_by_file(

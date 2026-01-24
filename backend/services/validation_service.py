@@ -120,7 +120,25 @@ class ValidationService:
         employee_file_name: str
     ) -> Dict[str, Any]:
         """
-        DB에 저장된 규칙을 사용하여 데이터 검증 수행
+        DB에 저장된 규칙을 사용하여 데이터 검증 수행 (Main Workflow)
+
+        이 메서드는 업로드된 직원 데이터 파일에 대해 다음 절차를 수행합니다:
+        1. **규칙 로드:** DB에서 AI가 해석한 검증 규칙을 불러옵니다.
+        2. **파일 파싱:** 엑셀 파일을 읽고, 숨겨진 시트는 자동으로 제외합니다.
+        3. **전처리 (Garbage Filtering):** 사번/입사일 등 핵심 정보가 없는 무의미한 행을 제거합니다.
+        4. **규칙 확장 (Common Rules):** '공통 규칙'을 해당 컬럼이 존재하는 모든 시트에 적용합니다.
+        5. **검증 실행 (Rule Engine):** 결정론적 엔진을 통해 데이터를 전수 검사합니다.
+        6. **K-IFRS 심화 검증:** 보험수리적 가정, 연령 정합성 등 고급 로직을 체크합니다.
+        7. **결과 정렬:** 사용자가 보기 편하도록 엑셀 컬럼 순서대로 결과를 정렬합니다.
+        8. **세션 저장:** 검증 이력을 DB에 기록하고 세션 ID를 발급합니다.
+
+        Args:
+            rule_file_id: 적용할 규칙 파일의 UUID
+            employee_file_content: 업로드된 직원 데이터 파일 (bytes)
+            employee_file_name: 파일명
+
+        Returns:
+            Dict: 검증 결과 요약, 세션 ID, 처리 시간 등을 포함한 응답 객체
         """
         start_time = datetime.now()
 
@@ -142,11 +160,15 @@ class ValidationService:
 
         # Step 2: 직원 데이터 파싱
         try:
-            excel_file = pd.ExcelFile(io.BytesIO(employee_file_content))
-            sheet_data_map = {}
-            from utils.excel_parser import normalize_sheet_name, get_canonical_name
+            from utils.excel_parser import normalize_sheet_name, get_canonical_name, get_visible_sheet_names
             
-            for sheet_name in excel_file.sheet_names:
+            # 숨겨진 시트 제외
+            visible_sheets = get_visible_sheet_names(employee_file_content)
+            print(f"[ValidationService] Visible sheets: {visible_sheets}")
+            
+            sheet_data_map = {}
+            
+            for sheet_name in visible_sheets:
                 df = pd.read_excel(io.BytesIO(employee_file_content), sheet_name=sheet_name)
                 canonical_name = get_canonical_name(sheet_name)
                 sheet_data_map[canonical_name] = {
@@ -156,6 +178,61 @@ class ValidationService:
                 }
         except Exception as e:
             raise ValueError(f"직원 데이터 파싱 실패: {str(e)}")
+
+        # Step 2.5: 유효하지 않은 행(Garbage Rows) 필터링
+        # - 핵심 정보(사번 AND 입사일)가 모두 없는 행을 주석/메모로 간주하여 제외
+        print("[ValidationService] Filtering garbage rows...")
+        for canonical_name, data in sheet_data_map.items():
+            df = data["df"]
+            original_len = len(df)
+            
+            # 1. 컬럼 그룹 식별 (부분 일치 허용)
+            id_keywords = ['사번', '사원번호', 'employee_id', 'emp_id', 'id', '코드', 'code']
+            date_keywords = ['입사일', '입사일자', 'hire_date', 'hire_dt']
+            
+            df_cols_lower = {str(col).lower(): col for col in df.columns}
+            
+            id_col = None
+            for kw in id_keywords:
+                for col_lower, original in df_cols_lower.items():
+                    if kw in col_lower:
+                        id_col = original
+                        break
+                if id_col: break
+                
+            date_col = None
+            for kw in date_keywords:
+                for col_lower, original in df_cols_lower.items():
+                    if kw in col_lower:
+                        date_col = original
+                        break
+                if date_col: break
+            
+            # 빈 값 체크 헬퍼 (NaN, None, 빈 문자열, 공백 모두 True)
+            def is_row_empty(series):
+                return series.astype(str).str.strip().replace(['nan', 'None', 'NaT', ''], np.nan).isna()
+
+            if id_col and date_col:
+                # 둘 다 비어있는 행 필터링
+                mask = is_row_empty(df[id_col]) & is_row_empty(df[date_col])
+                df = df[~mask]
+                print(f"  - Sheet '{data['display_name']}': Filtered garbage rows (Key: {id_col} & {date_col})")
+            elif id_col or date_col:
+                # 하나만 찾은 경우 해당 컬럼이 비어있으면 필터링
+                target_col = id_col or date_col
+                mask = is_row_empty(df[target_col])
+                df = df[~mask]
+                print(f"  - Sheet '{data['display_name']}': Filtered garbage rows (Key: {target_col})")
+            else:
+                # 키를 못 찾은 경우: 모든 컬럼에 대해 빈 값 체크하여 유효 데이터가 2개 미만이면 제거
+                # (단순 dropna는 빈 문자열을 못 잡으므로 apply 사용)
+                valid_counts = df.apply(lambda x: (~is_row_empty(x)).sum(), axis=1)
+                df = df[valid_counts >= 2]
+                print(f"  - Sheet '{data['display_name']}': Filtered garbage rows (Density Check)")
+            
+            if len(df) < original_len:
+                print(f"  -> Dropped {original_len - len(df)} garbage rows.")
+                data["df"] = df
 
         # Step 3: 공통 규칙(is_common) 확장 적용
         # 공통 규칙은 모든 시트를 검사하여 동일한 필드명이 있으면 자동으로 적용됨
@@ -268,10 +345,59 @@ class ValidationService:
             "all_data_sheets": [data['display_name'] for data in sheet_data_map.values()],
             "all_rule_sheets": list(set(r.source.sheet_name for r in validation_rules))
         }
+
+        # --- Rule-specific Status Calculation ---
+        from collections import Counter
+        error_counts_by_rule = Counter(err.rule_id for err in validation_res.errors)
+        
+        rules_validation_status = []
+        # Need access to get_canonical_name for mapping
+        from utils.excel_parser import get_canonical_name
+
+        # Create column order map for each sheet
+        column_order_map = {}
+        for c_name, data in sheet_data_map.items():
+            column_order_map[c_name] = {col: idx for idx, col in enumerate(data['df'].columns)}
+
+        for rule in validation_rules:
+            err_count = error_counts_by_rule.get(rule.rule_id, 0)
+            status_msg = "검증 100% 완료!" if err_count == 0 else f"{err_count}건의 수정 필요사항 발견"
+            
+            # Map to display_name
+            rule_canonical = get_canonical_name(rule.source.sheet_name)
+            display_sheet_name = sheet_data_map.get(rule_canonical, {}).get("display_name", rule.source.sheet_name)
+
+            # Get column index for sorting
+            col_idx = 9999
+            if rule_canonical in column_order_map:
+                col_idx = column_order_map[rule_canonical].get(rule.field_name, 9999)
+
+            rules_validation_status.append({
+                "rule_id": rule.rule_id,
+                "field_name": rule.field_name,
+                "rule_text": rule.source.original_text,
+                "sheet_name": display_sheet_name,
+                "error_count": err_count,
+                "status_message": status_msg,
+                "column_index": col_idx
+            })
+        
+        # Sort by sheet name then column index
+        rules_validation_status.sort(key=lambda x: (x['sheet_name'], x['column_index']))
+
+        # --- AI Role Summary Generation ---
+        ai_summary_text = (
+            f"AI는 저장된 규칙을 로드하여 {matching_stats['matched_sheets']}개의 시트에 매핑했습니다. "
+            f"총 {validation_res.summary.total_rows}행의 데이터를 검증하고 "
+            f"{validation_res.summary.total_errors}건의 데이터 오류를 식별했습니다."
+        )
+
         validation_res.metadata.update({
             "employee_file_name": employee_file_name,
             "rule_file_id": rule_file_id,
-            "matching_stats": matching_stats
+            "matching_stats": matching_stats,
+            "rules_validation_status": rules_validation_status,
+            "ai_role_summary": ai_summary_text
         })
 
         # Step 5: 세션 저장

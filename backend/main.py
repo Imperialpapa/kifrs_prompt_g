@@ -1,12 +1,21 @@
 """
 K-IFRS 1019 DBO Validation System - FastAPI Backend
 ===================================================
-전체 시스템을 통합하는 웹 API
+작성일: 2024-05-22
+설명: 확정급여채무(DBO) 평가를 위한 데이터 정합성 검증 시스템의 메인 API 서버입니다.
 
-Endpoints:
-- POST /upload: 파일 업로드
-- POST /validate: 검증 실행
-- GET /health: 헬스체크
+[시스템 아키텍처]
+1. Presentation Layer (Frontend): HTML/Alpine.js 기반의 SPA
+2. API Layer (This File): FastAPI를 이용한 RESTful API 제공
+3. Service Layer: 비즈니스 로직 처리 (Validation, Rule, Fix, Statistics)
+4. Domain Layer: AI 해석(AI Layer) 및 결정론적 검증(Rule Engine)
+5. Data Layer: Supabase (PostgreSQL) 및 로컬 파일 처리
+
+[주요 기능]
+- Excel 파일(.xlsx) 업로드 및 파싱
+- 자연어 규칙의 AI 해석 및 DB 저장
+- 결정론적 규칙 엔진을 통한 데이터 검증
+- K-IFRS 1019 특화 검증 (보험수리적 가정 등)
 """
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
@@ -17,6 +26,7 @@ import pandas as pd
 import io
 import os
 from typing import List, Dict, Any, Optional
+from uuid import UUID
 import traceback
 from datetime import datetime
 from pydantic import BaseModel
@@ -49,27 +59,23 @@ from database.supabase_client import supabase
 from utils.excel_parser import parse_rules_from_excel, normalize_sheet_name, get_canonical_name
 from utils.common import group_errors
 
-# =============================================================================
-# FastAPI 앱 초기화
-# =============================================================================
-
 app = FastAPI(
-    title="K-IFRS 1019 DBO Validation System",
+    title="K-IFRS 1019 DBO Validator",
     description="AI-Powered Data Validation for Defined Benefit Obligations",
-    version="1.0.0"
+    version="1.2.0"
 )
 
-# CORS 설정 (모바일에서 접근 가능하도록)
+# CORS 설정 (모바일 및 다양한 클라이언트 접근 지원)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 프로덕션에서는 구체적인 도메인 지정
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # =============================================================================
-# 전역 상태
+# 전역 서비스 레이어 초기화
 # =============================================================================
 
 ai_interpreter = AIRuleInterpreter()
@@ -81,34 +87,16 @@ statistics_service = StatisticsService()
 fix_service = FixService()
 learning_service = LearningService(supabase_client=supabase)
 
-
 # =============================================================================
-# 헬퍼 함수
-
-def sanitize_sheet_name(name: str) -> str:
-    r"""
-    Excel 시트 이름 제약사항 준수 처리
-    1. 최대 31자
-    2. 특수문자 제거 (: \ / ? * [ ])
-    """
-    if not name:
-        return "Sheet1"
-    
-    # 특수문자 제거
-    invalid_chars = [':', '\\', '/', '?', '*', '[', ']']
-    clean_name = name
-    for char in invalid_chars:
-        clean_name = clean_name.replace(char, '_')
-    
-    # 길이 제한 (31자)
-    return clean_name[:31]
+# 유틸리티 및 헬스체크 엔드포인트
+# =============================================================================
 
 @app.get("/")
 async def root():
     """
-    Serve the frontend index.html
+    프론트엔드 정적 파일(index.html) 제공
     """
-    # Check if index.html exists in parent or current dir
+    # 루트 디렉토리 또는 현재 디렉토리에서 index.html 탐색
     if os.path.exists("../index.html"):
         return FileResponse("../index.html")
     elif os.path.exists("index.html"):
@@ -123,28 +111,23 @@ async def root():
 
 @app.get("/api")
 async def api_info():
-    """
-    API info endpoint
-    """
+    """API 기본 정보 제공"""
     return {
         "service": "K-IFRS 1019 DBO Validation System",
         "version": "1.4.1",
-        "build_date": "2025-01-13 15:00:00",
         "status": "operational",
         "features": [
-            "다중 시트 검증 지원 (자동 매핑)",
-            "인지 항목 집계",
-            "동적 AI 규칙 생성",
-            "규칙 편집기 (Rule Editor)"
+            "다중 시트 검증",
+            "AI 규칙 해석",
+            "개인정보 마스킹",
+            "K-IFRS 특화 로직"
         ]
     }
 
 
 @app.get("/health")
 async def health_check():
-    """
-    헬스체크
-    """
+    """시스템 상태 확인"""
     return {
         "status": "healthy",
         "ai_layer": "operational",
@@ -154,27 +137,17 @@ async def health_check():
 
 @app.get("/version")
 async def get_version():
-    """버전 정보 조회"""
-    import sys
-    import platform
+    """시스템 버전 정보 반환"""
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return {
         "system_version": "1.2.6",
-        "build_date": now_str,
         "build_time": now_str,
-        "server_start_time": now_str,
-        "python_version": sys.version,
-        "platform": platform.platform(),
-        "features": {
-            "multi_sheet_validation": True,
-            "error_grouping": True,
-            "dynamic_rule_generation": True,
-            "excel_download": True,
-            "fuzzy_sheet_matching": True,
-            "sheet_matching_stats": True
-        }
+        "platform": "FastAPI/Python"
     }
 
+# =============================================================================
+# 1. Validation Endpoints (검증 관련)
+# =============================================================================
 
 @app.post("/validate", response_model=ValidationResponse)
 async def validate_data(
@@ -183,18 +156,31 @@ async def validate_data(
     ai_provider: str = Form("openai", description="AI Provider (openai, anthropic, gemini)")
 ):
     """
-    데이터 검증 실행
+    [Legacy] 파일 기반 즉시 검증 엔드포인트
+    
+    규칙 파일을 DB에 저장하지 않고, 업로드된 두 파일(데이터, 규칙)을 즉시 분석하여 결과를 반환합니다.
+    
+    Process:
+    1. 직원 데이터(.xlsx) 로드 및 숨겨진 시트 필터링
+    2. 무의미한 행(Garbage Row) 자동 감지 및 제거
+    3. 규칙 파일 로드 및 AI 해석 (Local/Cloud Hybrid)
+    4. Rule Engine을 통한 검증 실행
+    5. 결과 리턴 (메타데이터 및 통계 포함)
     """
     try:
         # Step 1: Excel A 읽기 (직원 데이터)
         print("[Step 1] Reading employee data...")
         employee_content = await employee_file.read()
-        excel_file = pd.ExcelFile(io.BytesIO(employee_content))
+        
+        # 숨겨진 시트 제외하고 로드
+        from utils.excel_parser import get_visible_sheet_names
+        visible_sheets = get_visible_sheet_names(employee_content)
+        print(f"[Step 1] Visible sheets: {visible_sheets}")
         
         sheet_data_map = {}
         sheet_mapping_info = {}
 
-        for sheet_name in excel_file.sheet_names:
+        for sheet_name in visible_sheets:
             df = pd.read_excel(io.BytesIO(employee_content), sheet_name=sheet_name)
             norm_name = normalize_sheet_name(sheet_name)
             canonical_name = get_canonical_name(sheet_name)
@@ -205,6 +191,50 @@ async def validate_data(
                 "df": df
             }
             sheet_mapping_info[canonical_name] = sheet_name
+
+        # Step 1.5: 유효하지 않은 행(Garbage Rows) 필터링
+        print("[Step 1.5] Filtering garbage rows...")
+        for canonical_name, data in sheet_data_map.items():
+            df = data["df"]
+            
+            # 사번/입사일 컬럼 식별 (부분 일치)
+            id_keywords = ['사번', '사원번호', 'employee_id', 'id', '코드', 'code']
+            date_keywords = ['입사일', '입사일자', 'hire_date']
+            df_cols_lower = {str(col).lower(): col for col in df.columns}
+            
+            id_col = None
+            for kw in id_keywords:
+                for col_lower, original in df_cols_lower.items():
+                    if kw in col_lower:
+                        id_col = original
+                        break
+                if id_col: break
+
+            date_col = None
+            for kw in date_keywords:
+                for col_lower, original in df_cols_lower.items():
+                    if kw in col_lower:
+                        date_col = original
+                        break
+                if date_col: break
+            
+            # 빈 값 체크 헬퍼
+            def is_row_empty(series):
+                import numpy as np
+                return series.astype(str).str.strip().replace(['nan', 'None', 'NaT', ''], np.nan).isna()
+
+            if id_col and date_col:
+                mask = is_row_empty(df[id_col]) & is_row_empty(df[date_col])
+                df = df[~mask]
+            elif id_col or date_col:
+                target = id_col or date_col
+                mask = is_row_empty(df[target])
+                df = df[~mask]
+            else:
+                valid_counts = df.apply(lambda x: (~is_row_empty(x)).sum(), axis=1)
+                df = df[valid_counts >= 2]
+            
+            data["df"] = df
 
         # Step 2: Excel B 읽기 (자연어 규칙)
         print("[Step 2] Reading validation rules...")
@@ -266,6 +296,51 @@ async def validate_data(
         # 실제 사용된 엔진 확인
         actual_model = "local-parser" if not ai_interpreter.use_cloud_ai else f"cloud-{ai_provider}"
 
+        # --- Rule-specific Status Calculation ---
+        from collections import Counter
+        error_counts_by_rule = Counter(err.rule_id for err in validation_res.errors)
+        
+        # Create column order map for each sheet
+        column_order_map = {}
+        for c_name, data in sheet_data_map.items():
+            column_order_map[c_name] = {col: idx for idx, col in enumerate(data['df'].columns)}
+
+        rules_validation_status = []
+        for rule in ai_response.rules:
+            err_count = error_counts_by_rule.get(rule.rule_id, 0)
+            status_msg = "검증 100% 완료!" if err_count == 0 else f"{err_count}건의 수정 필요사항 발견"
+            
+            # Frontend uses display_name (from sheet_data_map values) for tabs.
+            # We must ensure rule.sheet_name matches that.
+            rule_canonical = get_canonical_name(rule.source.sheet_name)
+            display_sheet_name = sheet_data_map.get(rule_canonical, {}).get("display_name", rule.source.sheet_name)
+
+            # Get column index for sorting
+            col_idx = 9999
+            if rule_canonical in column_order_map:
+                col_idx = column_order_map[rule_canonical].get(rule.field_name, 9999)
+
+            rules_validation_status.append({
+                "rule_id": rule.rule_id,
+                "field_name": rule.field_name,
+                "rule_text": rule.source.original_text,
+                "sheet_name": display_sheet_name,
+                "error_count": err_count,
+                "status_message": status_msg,
+                "column_index": col_idx
+            })
+        
+        # Sort by sheet name then column index
+        rules_validation_status.sort(key=lambda x: (x['sheet_name'], x['column_index']))
+            
+        # --- AI Role Summary Generation ---
+        ai_summary_text = (
+            f"AI는 {len(ai_response.rules)}개의 자연어 규칙을 해석하여 {len(matched_sheets_set)}개의 시트에 자동 매핑했습니다. "
+            f"총 {validation_res.summary.total_rows}행의 데이터를 검증하는 과정에서 "
+            f"{len(ai_response.conflicts)}건의 규칙 충돌 가능성을 분석하고, "
+            f"{validation_res.summary.total_errors}건의 데이터 오류를 식별했습니다."
+        )
+
         validation_res.metadata.update({
             "employee_file_name": employee_file.filename,
             "rules_file_name": rules_file.filename,
@@ -276,7 +351,9 @@ async def validate_data(
             "errors_shown": min(validation_res.summary.total_errors, 200),
             "error_groups_count": len(validation_res.error_groups),
             "matching_stats": matching_stats,
-            "sheet_order": [data["display_name"] for data in sheet_data_map.values()]
+            "sheet_order": [data["display_name"] for data in sheet_data_map.values()],
+            "rules_validation_status": rules_validation_status,
+            "ai_role_summary": ai_summary_text
         })
 
         print("\n[OK] Response ready")
@@ -1006,24 +1083,47 @@ async def validate_with_db_rules(
                 for rule in db_rules:
                     rule_id = str(rule['id'])
                     pattern_id = None
-                    
-                    # AI Rule ID가 'LEARNED_'로 시작하면 패턴 ID로 간주? 
-                    # 아니면 rule table에 pattern_id 컬럼이 없으니 ai_rule_id를 활용.
-                    # LearningService.smart_interpret은 rule_id를 'LEARNED_{pattern_id}' 형식으로 반환했음.
+
+                    # AI Rule ID가 'LEARNED_'로 시작하면 패턴 ID로 간주
                     ai_rule_id = rule.get('ai_rule_id', '')
                     if ai_rule_id and ai_rule_id.startswith('LEARNED_'):
                          pattern_id = ai_rule_id.replace('LEARNED_', '')
-                    # 또는 AI 해석된 규칙이면(패턴이 아니더라도) 결과 기록을 통해 추후 학습 데이터로 활용 가능하지만
-                    # 현재 LearningService는 pattern_id가 있어야 피드백을 기록함 (DB 업데이트)
-                    
+
+                    rule_error_count = error_counts.get(rule_id, 0)
+
                     if pattern_id:
-                        rule_error_count = error_counts.get(rule_id, 0)
+                        # 기존 패턴에 대한 피드백 기록
                         await learning_service.record_validation_result(
                             rule_id=rule_id,
                             pattern_id=pattern_id,
                             total_rows=total_rows,
                             error_count=rule_error_count
                         )
+                    else:
+                        # AI 해석 규칙 (아직 학습되지 않음) - 자동 학습 시도
+                        # 규칙별 성공률 계산
+                        rule_success_rate = 1.0 - (rule_error_count / total_rows) if total_rows > 0 else 0
+
+                        rule_text = rule.get('rule_text', '')
+                        field_name = rule.get('field_name', '')
+
+                        if rule_text and field_name:
+                            ai_interpretation = {
+                                "rule_type": rule.get('ai_rule_type'),
+                                "parameters": rule.get('ai_parameters', {}),
+                                "error_message": rule.get('ai_error_message', ''),
+                                "confidence_score": rule.get('ai_confidence_score', 0.8)
+                            }
+
+                            await learning_service.auto_learn_from_validation(
+                                rule_id=rule_id,
+                                rule_text=rule_text,
+                                field_name=field_name,
+                                ai_interpretation=ai_interpretation,
+                                validation_success_rate=rule_success_rate,
+                                total_rows=total_rows
+                            )
+
                 print(f"[Learning] Recorded validation feedback for session: {session_id}")
 
         except Exception as e:
@@ -1445,6 +1545,33 @@ async def get_pattern_effectiveness(pattern_id: str):
         raise HTTPException(
             status_code=500,
             detail={"error": "Failed to get pattern effectiveness", "message": str(e)}
+        )
+
+
+@app.post("/learning/maintenance")
+async def run_learning_maintenance():
+    """
+    학습 시스템 유지보수 실행
+
+    - 저신뢰 패턴 자동 비활성화 (성공률 < 60%, 피드백 5회 이상)
+    - 고성공률 패턴 확정 (성공률 >= 98%, 연속 성공 10회 이상)
+
+    Returns:
+        Dict: 유지보수 결과 통계
+    """
+    try:
+        result = await learning_service.run_maintenance()
+        return {
+            "status": "success",
+            "message": "학습 시스템 유지보수가 완료되었습니다.",
+            **result
+        }
+    except Exception as e:
+        print(f"[API] Learning maintenance error: {e}")
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "Failed to run learning maintenance", "message": str(e)}
         )
 
 

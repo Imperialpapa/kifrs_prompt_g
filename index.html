@@ -243,7 +243,7 @@
                          @click="document.getElementById('fileA').click()"
                          :class="{'border-primary-500 bg-primary-50': dragOverA, 'border-green-400 bg-green-50': fileA}">
                         
-                        <input type="file" id="fileA" accept=".xlsx,.xls" class="hidden" @change="handleFileSelect($event, 'A')">
+                        <input type="file" id="fileA" accept=".xlsx" class="hidden" @change="handleFileSelect($event, 'A')">
                         
                         <div class="pointer-events-none space-y-4">
                             <div class="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mx-auto transition-transform group-hover:scale-110 shadow-sm"
@@ -255,7 +255,7 @@
                                 <h3 class="text-lg font-bold text-slate-800">직원 데이터 업로드</h3>
                                 <p class="text-sm text-slate-500 mt-1">클릭하여 선택하거나 파일을 이곳에 드래그하세요</p>
                                 <div class="mt-4 inline-flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-full text-xs text-slate-500">
-                                    <i class="ph-fill ph-file-xls"></i> .xlsx, .xls 지원
+                                    <i class="ph-fill ph-file-xls"></i> .xlsx 지원
                                 </div>
                             </div>
 
@@ -300,6 +300,25 @@
 
                 <div x-show="hasResults" class="space-y-6">
                     
+                    <!-- AI Role Summary Banner -->
+                    <template x-if="results?.metadata?.ai_role_summary">
+                        <div class="rounded-lg p-4 border bg-indigo-50 border-indigo-200 text-indigo-900 shadow-sm relative overflow-hidden">
+                            <div class="absolute top-0 right-0 -mt-2 -mr-2 w-16 h-16 bg-indigo-100 rounded-full opacity-50 blur-xl"></div>
+                            <div class="flex items-start gap-3 relative z-10">
+                                <div class="mt-0.5 bg-white p-1.5 rounded-full border border-indigo-100 shadow-sm shrink-0">
+                                    <i class="ph-fill ph-magic-wand text-indigo-600 text-xl"></i>
+                                </div>
+                                <div>
+                                    <h4 class="font-bold text-sm mb-1 text-indigo-800 flex items-center gap-2">
+                                        AI 데이터 검증 요약
+                                        <span class="text-[10px] px-1.5 py-0.5 bg-white/60 border border-indigo-100 rounded text-indigo-600 font-mono" x-text="results.metadata.ai_model_version"></span>
+                                    </h4>
+                                    <p class="text-sm leading-relaxed text-indigo-800/90" x-text="results.metadata.ai_role_summary"></p>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+
                     <!-- Matching Info Banner -->
                     <template x-if="results?.metadata?.matching_stats">
                         <div class="rounded-lg p-4 border"
@@ -403,20 +422,6 @@
                         </div>
                     </div>
 
-                    <!-- Chart Section (Global) -->
-                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
-                        <div class="flex items-center justify-between mb-4">
-                            <h4 class="font-semibold text-slate-800 flex items-center gap-2">
-                                <i class="ph-fill ph-chart-bar text-primary-500"></i>
-                                전체 시트별 오류 분포
-                            </h4>
-                            <span class="text-xs text-slate-400">모든 시트의 오류 발생 현황을 보여줍니다</span>
-                        </div>
-                        <div class="h-64">
-                            <canvas id="sheetChart"></canvas>
-                        </div>
-                    </div>
-
                     <!-- Dashboard Tabs -->
                     <div class="border-b border-slate-200 mb-6">
                         <nav class="-mb-px flex space-x-8" aria-label="Tabs">
@@ -469,75 +474,106 @@
                         </div>
 
                         <!-- Sheet Content Area -->
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        
+                        <!-- Rule Verification Status (Moved to Top) -->
+                        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
+                            <h4 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">
+                                <i class="ph-fill ph-list-checks text-green-600"></i>
+                                <span>규칙별 검증 현황 ({{ selectedSheet }})</span>
+                            </h4>
                             
-                            <!-- Left Column: Stats & Summary -->
-                            <div class="space-y-6">
-                                <!-- Sheet Summary Card -->
-                                <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 h-full" x-data="{ summary: getSelectedSheetSummary() }">
-                                    <div class="flex items-center justify-between mb-6">
-                                        <h4 class="font-bold text-slate-800 text-lg flex items-center gap-2">
-                                            <i class="ph-fill ph-table text-slate-400"></i>
-                                            <span x-text="selectedSheet"></span>
-                                        </h4>
-                                    </div>
-                                    
-                                    <div class="grid grid-cols-2 gap-4">
-                                        <div class="bg-slate-50 rounded-lg p-4 border border-slate-100">
-                                            <div class="text-slate-500 text-xs font-medium mb-1">전체 데이터</div>
-                                            <div class="text-2xl font-bold text-slate-700" x-text="summary?.total_rows.toLocaleString()"></div>
-                                        </div>
-                                        <div class="bg-red-50 rounded-lg p-4 border border-red-100">
-                                            <div class="text-red-600 text-xs font-medium mb-1">오류 데이터</div>
-                                            <div class="text-2xl font-bold text-red-600" x-text="summary?.error_rows.toLocaleString()"></div>
-                                        </div>
-                                    </div>
-                                    
-                                    <div class="mt-6 pt-6 border-t border-slate-100">
-                                        <div class="flex justify-between items-center text-sm text-slate-600">
-                                            <span>오류율</span>
-                                            <span class="font-bold" x-text="summary?.total_rows > 0 ? Math.round((summary.error_rows / summary.total_rows) * 100) + '%' : '0%'"></span>
-                                        </div>
-                                        <div class="w-full bg-slate-100 rounded-full h-2.5 mt-2 overflow-hidden">
-                                            <div class="bg-red-500 h-2.5 rounded-full transition-all duration-500" 
-                                                 :style="'width: ' + (summary?.total_rows > 0 ? (summary.error_rows / summary.total_rows) * 100 : 0) + '%'"></div>
-                                        </div>
-                                    </div>
-                                </div>
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-sm text-left">
+                                    <thead class="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
+                                        <tr>
+                                            <th class="px-4 py-3">항목명</th>
+                                            <th class="px-4 py-3 w-1/2">규칙 내용</th>
+                                            <th class="px-4 py-3 text-center">오류 수</th>
+                                            <th class="px-4 py-3 text-center">상태</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-100">
+                                        <template x-for="rule in results?.metadata?.rules_validation_status?.filter(r => r.sheet_name === selectedSheet) || []" :key="rule.rule_id">
+                                            <tr class="hover:bg-slate-50 transition-colors cursor-pointer"
+                                                :class="selectedRuleDetailId === rule.rule_id ? 'bg-indigo-50 border-l-4 border-indigo-500' : ''"
+                                                @click="selectRuleDetail(rule.rule_id)">
+                                                <td class="px-4 py-3 font-bold text-indigo-600" x-text="rule.field_name"></td>
+                                                <td class="px-4 py-3">
+                                                    <div class="font-medium text-slate-800" x-text="rule.rule_text"></div>
+                                                    <div class="text-xs text-slate-400 font-mono mt-0.5" x-text="rule.rule_id"></div>
+                                                </td>
+                                                <td class="px-4 py-3 text-center">
+                                                    <span class="font-bold" 
+                                                          :class="rule.error_count > 0 ? 'text-red-600' : 'text-slate-400'"
+                                                          x-text="rule.error_count.toLocaleString()"></span>
+                                                </td>
+                                                <td class="px-4 py-3 text-center">
+                                                    <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium"
+                                                          :class="rule.error_count === 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'">
+                                                        <i class="ph-fill" :class="rule.error_count === 0 ? 'ph-check-circle' : 'ph-warning-circle'"></i>
+                                                        <span x-text="rule.status_message"></span>
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        </template>
+                                        <tr x-show="!results?.metadata?.rules_validation_status?.some(r => r.sheet_name === selectedSheet)">
+                                            <td colspan="3" class="px-4 py-8 text-center text-slate-400">
+                                                이 시트에 적용된 규칙이 없습니다.
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
+                        </div>
 
-                            <!-- Right Column: Top 5 Issues -->
-                            <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 flex flex-col h-full">
-                                <h4 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">
-                                    <i class="ph-fill ph-warning text-orange-500"></i>
-                                    <span>주요 인지 항목 (Top 5)</span>
+                        <!-- Rule Detail View (Drill-down) -->
+                        <div x-show="selectedRuleDetailId" x-transition.opacity class="bg-white rounded-xl border border-indigo-200 shadow-sm overflow-hidden mb-6">
+                            <div class="p-4 border-b border-indigo-100 bg-indigo-50 flex items-center justify-between">
+                                <h4 class="font-bold text-indigo-900 flex items-center gap-2">
+                                    <i class="ph-fill ph-magnifying-glass text-indigo-600"></i>
+                                    상세 분석 결과: <span class="font-mono text-sm" x-text="selectedRuleDetailId"></span>
                                 </h4>
-                                
-                                <div class="flex-1 overflow-y-auto space-y-3 custom-scrollbar pr-1">
-                                    <template x-for="(group, index) in getTopErrorsForSheet(selectedSheet)" :key="index">
-                                        <div class="p-3 bg-slate-50 rounded-lg border-l-4 border-orange-400 hover:bg-orange-50/50 transition-colors">
-                                            <div class="flex justify-between items-start mb-1.5">
-                                                <span class="text-xs font-bold text-slate-600 bg-white border border-slate-200 px-1.5 py-0.5 rounded" x-text="group.column"></span>
-                                                <span class="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-bold whitespace-nowrap" x-text="group.count + '건'"></span>
-                                            </div>
-                                            <p class="text-sm text-slate-700 leading-snug" x-text="group.message"></p>
-                                            
-                                            <!-- Sample Values -->
-                                            <div class="mt-2 pt-2 border-t border-slate-200/50 flex gap-1 overflow-x-auto">
-                                                <template x-for="val in group.sample_values" :key="val">
-                                                    <span class="text-[10px] font-mono bg-white text-slate-500 px-1 rounded border border-slate-200 whitespace-nowrap" x-text="val"></span>
-                                                </template>
-                                            </div>
-                                        </div>
-                                    </template>
-                                    
-                                    <div x-show="getTopErrorsForSheet(selectedSheet).length === 0" class="flex flex-col items-center justify-center h-40 text-slate-400">
-                                        <i class="ph ph-check-circle text-4xl mb-2 text-green-100"></i>
-                                        <span class="text-sm">발견된 오류가 없습니다.</span>
-                                    </div>
-                                </div>
+                                <button @click="selectedRuleDetailId = null" class="text-indigo-400 hover:text-indigo-700">
+                                    <i class="ph ph-x text-lg"></i>
+                                </button>
                             </div>
-
+                            
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-sm text-left">
+                                    <thead class="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
+                                        <tr>
+                                            <th class="px-6 py-3">행 번호</th>
+                                            <th class="px-6 py-3">컬럼</th>
+                                            <th class="px-6 py-3">오류 내용</th>
+                                            <th class="px-6 py-3">입력값</th>
+                                            <th class="px-6 py-3">예상값</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-100">
+                                        <template x-for="error in getRuleDetailErrors()" :key="error.id || Math.random()">
+                                            <tr class="hover:bg-slate-50 transition-colors">
+                                                <td class="px-6 py-3 font-mono text-slate-600" x-text="error.row"></td>
+                                                <td class="px-6 py-3 font-medium text-slate-700" x-text="error.column"></td>
+                                                <td class="px-6 py-3 text-slate-600" x-text="error.message"></td>
+                                                <td class="px-6 py-3">
+                                                    <span class="px-2 py-1 bg-red-50 text-red-600 rounded text-xs font-mono" x-text="maskSensitiveInfo(error.actual_value, error.column)"></span>
+                                                </td>
+                                                <td class="px-6 py-3">
+                                                    <span class="px-2 py-1 bg-green-50 text-green-600 rounded text-xs font-mono" x-text="maskSensitiveInfo(error.expected, error.column) || '-'"></span>
+                                                </td>
+                                            </tr>
+                                        </template>
+                                        <tr x-show="getRuleDetailErrors().length === 0">
+                                            <td colspan="5" class="px-6 py-12 text-center text-slate-500">
+                                                이 규칙에 대한 오류 데이터가 없습니다. (검증 성공)
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="p-3 border-t border-slate-100 bg-slate-50 text-right text-xs text-slate-500">
+                                <span x-text="'총 ' + getRuleDetailErrors().length + ' 건의 오류가 발견되었습니다.'"></span>
+                            </div>
                         </div>
                     </div>
 
@@ -743,7 +779,7 @@
                                                         <td class="px-3 py-2 font-medium text-slate-700" x-text="item.column"></td>
                                                         <td class="px-3 py-2 text-slate-500" x-text="item.row"></td>
                                                         <td class="px-3 py-2">
-                                                            <span class="px-2 py-1 bg-red-50 text-red-600 rounded text-xs font-mono" x-text="item.before"></span>
+                                                            <span class="px-2 py-1 bg-red-50 text-red-600 rounded text-xs font-mono" x-text="maskSensitiveInfo(item.before, item.column)"></span>
                                                         </td>
                                                         <td class="px-3 py-2 text-center">
                                                             <i class="ph ph-arrow-right text-slate-300"></i>
@@ -751,7 +787,7 @@
                                                         <td class="px-3 py-2">
                                                             <span class="px-2 py-1 rounded text-xs font-mono"
                                                                   :class="item.success ? 'bg-green-50 text-green-600' : 'bg-slate-100 text-slate-400'"
-                                                                  x-text="item.after"></span>
+                                                                  x-text="maskSensitiveInfo(item.after, item.column)"></span>
                                                         </td>
                                                         <td class="px-3 py-2 text-center">
                                                             <i class="ph-fill"
@@ -772,6 +808,70 @@
                         </template>
                     </div>
 
+                </div>
+            </div>
+
+            <!-- VIEW: REFERENCE -->
+            <div x-show="currentTab === 'reference'" x-cloak>
+                <div class="max-w-7xl mx-auto space-y-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h2 class="text-2xl font-bold text-slate-900 flex items-center gap-2">
+                                <i class="ph-fill ph-article text-slate-600"></i>
+                                참고 자료
+                            </h2>
+                            <p class="text-slate-500 mt-1">데이터 분석에 유용한 추가 통계 및 차트를 확인하세요.</p>
+                        </div>
+                    </div>
+
+                    <!-- Chart Section (Moved from Dashboard) -->
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <h4 class="font-semibold text-slate-800 flex items-center gap-2">
+                                <i class="ph-fill ph-chart-bar text-primary-500"></i>
+                                전체 시트별 오류 분포
+                            </h4>
+                            <span class="text-xs text-slate-400">모든 시트의 오류 발생 현황을 보여줍니다</span>
+                        </div>
+                        <div class="h-64">
+                            <canvas id="sheetChartRef"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Top 5 Issues (Moved from Dashboard) -->
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+                        <h4 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">
+                            <i class="ph-fill ph-warning text-orange-500"></i>
+                            <span>주요 인지 항목 (Top 5)</span>
+                        </h4>
+                        
+                        <div class="space-y-3">
+                            <template x-for="(group, index) in (selectedSheet ? getTopErrorsForSheet(selectedSheet) : [])" :key="index">
+                                <div class="p-3 bg-slate-50 rounded-lg border-l-4 border-orange-400 hover:bg-orange-50/50 transition-colors">
+                                    <div class="flex justify-between items-start mb-1.5">
+                                        <div class="flex items-center gap-2">
+                                            <span class="text-xs font-bold text-slate-600 bg-white border border-slate-200 px-1.5 py-0.5 rounded" x-text="group.column"></span>
+                                            <span class="text-xs text-slate-500" x-show="!selectedSheet" x-text="group.sheet"></span>
+                                        </div>
+                                        <span class="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-bold whitespace-nowrap" x-text="group.count + '건'"></span>
+                                    </div>
+                                    <p class="text-sm text-slate-700 leading-snug" x-text="group.message"></p>
+                                    
+                                    <!-- Sample Values -->
+                                    <div class="mt-2 pt-2 border-t border-slate-200/50 flex gap-1 overflow-x-auto">
+                                        <template x-for="val in group.sample_values" :key="val">
+                                            <span class="text-[10px] font-mono bg-white text-slate-500 px-1 rounded border border-slate-200 whitespace-nowrap" x-text="maskSensitiveInfo(val, group.column)"></span>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+                            
+                            <div x-show="!selectedSheet || getTopErrorsForSheet(selectedSheet).length === 0" class="flex flex-col items-center justify-center h-40 text-slate-400">
+                                <i class="ph ph-check-circle text-4xl mb-2 text-green-100"></i>
+                                <span class="text-sm" x-text="selectedSheet ? '발견된 오류가 없습니다.' : '시트를 선택하면 분석 결과가 표시됩니다.'"></span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -843,9 +943,9 @@
                                             </td>
                                             <td class="px-6 py-4">
                                                 <div class="flex items-center gap-2">
-                                                    <span class="px-2 py-1 bg-red-50 text-red-600 rounded text-xs font-mono" x-text="error.actual_value"></span>
+                                                    <span class="px-2 py-1 bg-red-50 text-red-600 rounded text-xs font-mono" x-text="maskSensitiveInfo(error.actual_value, error.column)"></span>
                                                     <i class="ph ph-arrow-right text-slate-300 text-xs" x-show="error.expected"></i>
-                                                    <span class="px-2 py-1 bg-green-50 text-green-600 rounded text-xs font-mono" x-show="error.expected" x-text="error.expected"></span>
+                                                    <span class="px-2 py-1 bg-green-50 text-green-600 rounded text-xs font-mono" x-show="error.expected" x-text="maskSensitiveInfo(error.expected, error.column)"></span>
                                                 </div>
                                             </td>
                                             <td class="px-6 py-4">
@@ -1051,6 +1151,53 @@
                             </div>
                         </div>
 
+                        <!-- Learning Charts Section -->
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <!-- 학습 추이 차트 (Line) -->
+                            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                                    <i class="ph-fill ph-chart-line text-blue-500"></i>
+                                    학습 추이 (최근 30일)
+                                </h3>
+                                <div class="h-64">
+                                    <canvas id="learningTrendChart"></canvas>
+                                </div>
+                            </div>
+
+                            <!-- 패턴 유형 분포 (Doughnut) -->
+                            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                                    <i class="ph-fill ph-pie-chart text-purple-500"></i>
+                                    패턴 유형 분포
+                                </h3>
+                                <div class="h-64 flex items-center justify-center">
+                                    <canvas id="patternTypeChart"></canvas>
+                                </div>
+                            </div>
+
+                            <!-- 신뢰도 분포 (Bar) -->
+                            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                                    <i class="ph-fill ph-chart-bar text-green-500"></i>
+                                    신뢰도 분포
+                                </h3>
+                                <div class="h-64">
+                                    <canvas id="confidenceDistChart"></canvas>
+                                </div>
+                            </div>
+
+                            <!-- 성공률 추이 (Line) -->
+                            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                                    <i class="ph-fill ph-trend-up text-emerald-500"></i>
+                                    주간 성공률 추이
+                                </h3>
+                                <div class="h-64">
+                                    <canvas id="successRateChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                             <!-- Top Patterns -->
                             <div class="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -1140,6 +1287,87 @@
                 </div>
             </div>
 
+            <!-- VIEW: STATISTICS -->
+            <div x-show="currentTab === 'statistics'" x-cloak x-init="$watch('currentTab', val => { if(val === 'statistics') loadStatistics() })">
+                <div class="max-w-7xl mx-auto space-y-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h2 class="text-2xl font-bold text-slate-900 flex items-center gap-2">
+                                <i class="ph-fill ph-trend-up text-blue-600"></i>
+                                통합 통계 분석
+                            </h2>
+                            <p class="text-slate-500 mt-1">전체 검증 세션과 규칙별 오류 현황을 분석합니다.</p>
+                        </div>
+                        <button @click="loadStatistics()" class="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors">
+                            <i class="ph ph-arrows-clockwise text-xl"></i>
+                        </button>
+                    </div>
+
+                    <div x-show="!statisticsData" class="flex flex-col items-center justify-center py-20">
+                        <i class="ph-bold ph-spinner animate-spin text-4xl text-blue-500 mb-4"></i>
+                        <p class="text-slate-500">통계 데이터를 불러오는 중...</p>
+                    </div>
+
+                    <div x-show="statisticsData" class="space-y-6">
+                        <!-- Overview Cards -->
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                <div class="text-slate-500 text-sm font-medium mb-2">총 검증 세션</div>
+                                <div class="text-3xl font-bold text-slate-800" x-text="statisticsData?.overview?.total_sessions.toLocaleString()"></div>
+                            </div>
+                            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                <div class="text-slate-500 text-sm font-medium mb-2">검증된 데이터 행</div>
+                                <div class="text-3xl font-bold text-blue-600" x-text="statisticsData?.overview?.total_rows_validated.toLocaleString()"></div>
+                            </div>
+                            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                <div class="text-slate-500 text-sm font-medium mb-2">평균 오류율</div>
+                                <div class="text-3xl font-bold" :class="statisticsData?.overview?.avg_error_rate > 10 ? 'text-red-600' : 'text-green-600'">
+                                    <span x-text="statisticsData?.overview?.avg_error_rate"></span>%
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <!-- Recent Error Trend -->
+                            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                                    <i class="ph-fill ph-chart-line-up text-red-500"></i>
+                                    최근 오류 발생 추이 (10회)
+                                </h3>
+                                <div class="h-64">
+                                    <canvas id="errorTrendChart"></canvas>
+                                </div>
+                            </div>
+
+                            <!-- Top Error Rules -->
+                            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col">
+                                <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                                    <i class="ph-fill ph-warning-circle text-orange-500"></i>
+                                    가장 많이 위반된 규칙 (Top 10)
+                                </h3>
+                                <div class="flex-1 overflow-y-auto custom-scrollbar max-h-64 space-y-3">
+                                    <template x-for="(rule, idx) in statisticsData?.top_error_rules" :key="rule.rule_id">
+                                        <div class="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100">
+                                            <div class="flex items-center gap-3">
+                                                <div class="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-600" x-text="idx + 1"></div>
+                                                <div>
+                                                    <div class="text-xs font-mono text-slate-500" x-text="rule.rule_id"></div>
+                                                    <div class="text-sm font-medium text-slate-800 truncate max-w-[200px]" :title="rule.sample_msg" x-text="rule.sample_msg"></div>
+                                                </div>
+                                            </div>
+                                            <div class="text-right">
+                                                <div class="text-sm font-bold text-red-600" x-text="rule.count.toLocaleString()"></div>
+                                                <div class="text-[10px] text-slate-400">오류 건수</div>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- VIEW: RULES MANAGEMENT (REDESIGNED) -->
             <div x-show="currentTab === 'rules'" x-cloak x-init="if(currentTab === 'rules') loadRuleFiles()">
                 <div class="max-w-7xl mx-auto space-y-6">
@@ -1196,10 +1424,10 @@
                                 <div class="space-y-4">
                                     <div class="border-2 border-dashed border-slate-300 rounded-xl p-6 text-center hover:border-primary-400 hover:bg-primary-50/30 transition-all cursor-pointer"
                                          @click="$refs.ruleFileInputNew.click()">
-                                        <input type="file" x-ref="ruleFileInputNew" accept=".xlsx,.xls" @change="handleRuleFileSelect($event)" class="hidden">
+                                        <input type="file" x-ref="ruleFileInputNew" accept=".xlsx" @change="handleRuleFileSelect($event)" class="hidden">
                                         <i class="ph ph-file-xls text-4xl text-slate-400 mb-2"></i>
                                         <p class="text-slate-600 font-medium" x-text="ruleFileToUpload ? ruleFileToUpload.name : '클릭하여 파일 선택'"></p>
-                                        <p class="text-xs text-slate-400 mt-1">.xlsx, .xls 파일 지원</p>
+                                        <p class="text-xs text-slate-400 mt-1">.xlsx 파일 지원</p>
                                     </div>
                                 </div>
                                 <div class="space-y-3">
@@ -2204,30 +2432,49 @@
     </div>
 
     <script>
+        /**
+         * [Frontend Application Logic]
+         * Alpine.js를 사용한 단일 페이지 애플리케이션(SPA) 구조
+         * 
+         * [State Management]
+         * - UI State: 탭 전환, 모달, 사이드바 제어
+         * - Data State: 파일 업로드, 검증 결과(results), 규칙 데이터(ruleFileDetails)
+         * - Async State: 로딩 인디케이터(isLoading)
+         */
         function app() {
             return {
+                // =================================================================
+                // 1. Core State & Configuration
+                // =================================================================
+                API_BASE_URL: 'http://localhost:8000',
                 sidebarOpen: false,
-                currentTab: 'upload', // upload, dashboard, report
+                currentTab: 'upload', // Main Navigation: upload, dashboard, report, rules, etc.
                 
-                // File Upload State
-                fileA: null,
-                fileB: null,
+                // =================================================================
+                // 2. File Upload & Validation State
+                // =================================================================
+                fileA: null, // Employee Data File
+                fileB: null, // Rules File (Legacy)
                 dragOverA: false,
                 dragOverB: false,
                 isLoading: false,
                 useSavedRule: true, // Default to using DB rules
                 selectedSavedRuleId: null,
 
-                // Results State
-                results: null,
-                dbErrors: null, // DB에서 가져온 에러들 (ID 포함)
+                // =================================================================
+                // 3. Validation Results State
+                // =================================================================
+                results: null, // Main Validation Response
+                dbErrors: null, // Errors with DB IDs (for feedback/fix)
                 searchQuery: '',
                 filterSheet: 'all',
                 currentPage: 1,
                 pageSize: 20,
                 frontendVersion: 'Front: v1.4.1 (2025-01-13)',
                 backendVersion: 'Back: Checking...',
-                selectedSheet: null, // 현재 선택된 시트
+                    selectedSheet: null, // 현재 선택된 시트
+                    selectedRuleDetailId: null, // 선택된 규칙 ID (상세보기용)
+                    chartInstance: null,
                 dashboardTab: 'analysis', // 'analysis' or 'fix'
 
                 // Feedback State
@@ -2410,6 +2657,9 @@
                     }
                 },
 
+                // =================================================================
+                // 5. Smart Fix & Bulk Correction State
+                // =================================================================
                 // Smart Fix State
                 // fixModalOpen: false, // Removed in favor of tab
                 isFixLoading: false,
@@ -2424,12 +2674,14 @@
                 isDownloading: false,
                 fixPreview: { total: 0, success: 0, fail: 0, successRate: 0, items: [] },
 
+                // =================================================================
+                // 6. Navigation & UI Helpers
+                // =================================================================
                 // Navigation Groups
                 navGroups: [
                     {
                         title: "검증 실행",
                         items: [
-                            { id: 'rules', label: '규칙 관리', icon: 'ph-gear-six' },
                             { id: 'upload', label: '파일 업로드 (검증)', icon: 'ph-upload-simple' }
                         ]
                     },
@@ -2437,7 +2689,6 @@
                         title: "결과 분석 및 수정",
                         items: [
                             { id: 'dashboard', label: '검증 대시보드', icon: 'ph-chart-pie-slice' },
-                            { id: 'report', label: '상세 리포트', icon: 'ph-table' },
                             { id: 'ai_fix', label: 'AI 스마트 수정', icon: 'ph-magic-wand' }
                         ]
                     },
@@ -2446,13 +2697,41 @@
                         items: [
                             { id: 'learning', label: 'AI 학습 현황', icon: 'ph-brain' },
                             { id: 'statistics', label: '통계 분석', icon: 'ph-trend-up' },
-                            { id: 'settings', label: '설정 (AI 모델)', icon: 'ph-gear' }
+                            { id: 'settings', label: '설정 (AI 모델)', icon: 'ph-gear' },
+                            { id: 'rules', label: '규칙 관리', icon: 'ph-gear-six' }
+                        ]
+                    },
+                    {
+                        title: "참고 기능",
+                        items: [
+                            { id: 'reference', label: '참고 자료', icon: 'ph-article' },
+                            { id: 'report', label: '상세 리포트', icon: 'ph-table' }
                         ]
                     }
                 ],
 
                 get navItems() {
                     return this.navGroups.flatMap(g => g.items);
+                },
+
+                // 개인정보 마스킹 (주민번호 등)
+                maskSensitiveInfo(value, column = '') {
+                    if (value === null || value === undefined || value === '') return '-';
+                    const strVal = String(value);
+                    const colName = String(column).toLowerCase();
+
+                    // 1. 컬럼명 기반 마스킹 (주민번호, 외국인번호 등)
+                    if (colName.includes('주민') || colName.includes('외국인') || colName.includes('rrn') || colName.includes('resident')) {
+                        // 패턴: 8001011234567 또는 800101-1234567
+                        return strVal.replace(/^(\d{6})[-]?\d{7}$/, '$1-*******');
+                    }
+
+                    // 2. 값 패턴 기반 마스킹 (컬럼명은 다르지만 주민번호 형식인 경우)
+                    if (/^\d{6}[-]?\d{7}$/.test(strVal)) {
+                        return strVal.replace(/^(\d{6})[-]?\d{7}$/, '$1-*******');
+                    }
+
+                    return value;
                 },
 
                 // Toast State
@@ -2494,7 +2773,7 @@
                 async init() {
                     // Fetch Version Info
                     try {
-                        const res = await fetch('http://localhost:8000/version');
+                        const res = await fetch(`${this.API_BASE_URL}/version`);
                         const data = await res.json();
                         this.backendVersion = `Back: v${data.system_version} (${data.build_time})`;
                     } catch (e) {
@@ -2548,7 +2827,7 @@
                     this.aiExplanationModalOpen = true;
 
                     try {
-                        const response = await fetch('http://localhost:8000/errors/explain', {
+                        const response = await fetch(`${this.API_BASE_URL}/errors/explain`, {
                             method: 'POST',
                             headers: { 
                                 'Content-Type': 'application/json',
@@ -2601,6 +2880,21 @@
                 getSelectedSheetSummary() {
                     if (!this.selectedSheet || !this.results || !this.results.metadata.sheets_summary) return null;
                     return this.results.metadata.sheets_summary[this.selectedSheet];
+                },
+
+                // 규칙 선택 (상세보기)
+                selectRuleDetail(ruleId) {
+                    if (this.selectedRuleDetailId === ruleId) {
+                        this.selectedRuleDetailId = null; // Toggle off
+                    } else {
+                        this.selectedRuleDetailId = ruleId;
+                    }
+                },
+
+                // 선택된 규칙의 오류 목록 가져오기
+                getRuleDetailErrors() {
+                    if (!this.results || !this.selectedRuleDetailId) return [];
+                    return this.results.errors.filter(e => e.rule_id === this.selectedRuleDetailId);
                 },
 
                 // Bulk Fix: 시트+컬럼 조합별 오류 집계
@@ -3012,6 +3306,17 @@
 
                 async validateFiles() {
                     if (!this.fileA) return;
+                    
+                    // .xls 파일 체크
+                    if (this.fileA.name.toLowerCase().endsWith('.xls')) {
+                        alert("구버전 Excel 파일(.xls)은 호환성 문제가 발생할 수 있습니다.\n\nExcel에서 해당 파일을 열어 [.xlsx] 형식으로 '다른 이름으로 저장'한 후 다시 시도해주세요.");
+                        this.isLoading = false;
+                        // 파일 선택 초기화 (선택사항, 사용자가 바로 다시 선택하기 편하게)
+                        this.fileA = null;
+                        document.getElementById('fileA').value = ''; 
+                        return;
+                    }
+
                     if (!this.useSavedRule && !this.fileB) return;
                     if (this.useSavedRule && !this.selectedSavedRuleId) return;
 
@@ -3110,7 +3415,9 @@
                             this.results = data;
                         }
                         
-                        // 기본 선택 시트 설정 (첫 번째 시트)
+                        this.hasResults = true; // Ensure results are shown
+
+                        // Auto-select first sheet
                         if (this.results.metadata) {
                             if (this.results.metadata.sheet_order && this.results.metadata.sheet_order.length > 0) {
                                 this.selectedSheet = this.results.metadata.sheet_order[0];
@@ -3236,14 +3543,247 @@
 
                 statistics: null,
                 learningStats: null,
+                statisticsData: null,
+
+                async loadStatistics() {
+                    try {
+                        const response = await fetch('http://localhost:8000/statistics/dashboard');
+                        if (!response.ok) throw new Error('통계 데이터 로딩 실패');
+                        this.statisticsData = await response.json();
+                        
+                        this.$nextTick(() => {
+                            this.renderStatisticsCharts();
+                        });
+                    } catch (e) {
+                        console.error('Statistics error:', e);
+                        this.showToast('통계 데이터를 불러오는데 실패했습니다.', 'error');
+                    }
+                },
+
+                renderStatisticsCharts() {
+                    if (!this.statisticsData || !this.statisticsData.recent_trend) return;
+
+                    const ctx = document.getElementById('errorTrendChart');
+                    if (ctx) {
+                        if (window.errorTrendChartInstance) window.errorTrendChartInstance.destroy();
+                        
+                        const trend = this.statisticsData.recent_trend;
+                        window.errorTrendChartInstance = new Chart(ctx, {
+                            type: 'line',
+                            data: {
+                                labels: trend.map(item => item.date),
+                                datasets: [{
+                                    label: '오류 발생 건수',
+                                    data: trend.map(item => item.errors),
+                                    borderColor: '#ef4444',
+                                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                                    tension: 0.3,
+                                    fill: true
+                                }]
+                            },
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                plugins: { legend: { display: false } },
+                                scales: { y: { beginAtZero: true } }
+                            }
+                        });
+                    }
+                },
 
                 async loadLearningStats() {
                     try {
                         const response = await fetch('http://localhost:8000/learning/statistics');
                         if (!response.ok) throw new Error('학습 통계 로딩 실패');
                         this.learningStats = await response.json();
+
+                        // 차트 렌더링
+                        this.$nextTick(() => {
+                            this.renderLearningCharts();
+                        });
                     } catch (e) {
                         console.error('Learning stats error:', e);
+                    }
+                },
+
+                renderLearningCharts() {
+                    if (!this.learningStats) return;
+
+                    // 1. 학습 추이 차트 (Line)
+                    const trendCtx = document.getElementById('learningTrendChart');
+                    if (trendCtx && this.learningStats.daily_learning_trend) {
+                        if (window.learningTrendChartInstance) {
+                            window.learningTrendChartInstance.destroy();
+                        }
+
+                        const trend = this.learningStats.daily_learning_trend;
+                        const labels = trend.map(d => d.date.slice(5)); // MM-DD 형식
+                        const totalData = trend.map(d => d.total_patterns);
+                        const newData = trend.map(d => d.new_patterns);
+
+                        window.learningTrendChartInstance = new Chart(trendCtx, {
+                            type: 'line',
+                            data: {
+                                labels: labels,
+                                datasets: [
+                                    {
+                                        label: '총 패턴 수',
+                                        data: totalData,
+                                        borderColor: '#8b5cf6',
+                                        backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                                        tension: 0.3,
+                                        fill: true,
+                                        yAxisID: 'y'
+                                    },
+                                    {
+                                        label: '신규 패턴',
+                                        data: newData,
+                                        borderColor: '#06b6d4',
+                                        backgroundColor: 'rgba(6, 182, 212, 0.5)',
+                                        type: 'bar',
+                                        yAxisID: 'y1'
+                                    }
+                                ]
+                            },
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                interaction: { intersect: false, mode: 'index' },
+                                scales: {
+                                    y: {
+                                        position: 'left',
+                                        beginAtZero: true,
+                                        grid: { borderDash: [2, 4] }
+                                    },
+                                    y1: {
+                                        position: 'right',
+                                        beginAtZero: true,
+                                        grid: { display: false }
+                                    },
+                                    x: { grid: { display: false } }
+                                },
+                                plugins: { legend: { position: 'bottom' } }
+                            }
+                        });
+                    }
+
+                    // 2. 패턴 유형 분포 차트 (Doughnut)
+                    const typeCtx = document.getElementById('patternTypeChart');
+                    if (typeCtx && this.learningStats.pattern_type_distribution) {
+                        if (window.patternTypeChartInstance) {
+                            window.patternTypeChartInstance.destroy();
+                        }
+
+                        const dist = this.learningStats.pattern_type_distribution;
+                        const labels = Object.keys(dist);
+                        const data = Object.values(dist);
+                        const colors = [
+                            '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b',
+                            '#ef4444', '#ec4899', '#6366f1', '#84cc16'
+                        ];
+
+                        window.patternTypeChartInstance = new Chart(typeCtx, {
+                            type: 'doughnut',
+                            data: {
+                                labels: labels,
+                                datasets: [{
+                                    data: data,
+                                    backgroundColor: colors.slice(0, labels.length),
+                                    borderWidth: 0
+                                }]
+                            },
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                cutout: '60%',
+                                plugins: {
+                                    legend: { position: 'right' }
+                                }
+                            }
+                        });
+                    }
+
+                    // 3. 신뢰도 분포 차트 (Bar)
+                    const confCtx = document.getElementById('confidenceDistChart');
+                    if (confCtx && this.learningStats.confidence_distribution) {
+                        if (window.confidenceDistChartInstance) {
+                            window.confidenceDistChartInstance.destroy();
+                        }
+
+                        const dist = this.learningStats.confidence_distribution;
+                        const labels = Object.keys(dist);
+                        const data = Object.values(dist);
+
+                        window.confidenceDistChartInstance = new Chart(confCtx, {
+                            type: 'bar',
+                            data: {
+                                labels: labels,
+                                datasets: [{
+                                    label: '패턴 수',
+                                    data: data,
+                                    backgroundColor: [
+                                        '#fca5a5', // 0.6-0.7: 낮음
+                                        '#fcd34d', // 0.7-0.8: 보통
+                                        '#86efac', // 0.8-0.9: 양호
+                                        '#22c55e'  // 0.9-1.0: 우수
+                                    ],
+                                    borderRadius: 4
+                                }]
+                            },
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                scales: {
+                                    y: { beginAtZero: true, grid: { borderDash: [2, 4] } },
+                                    x: { grid: { display: false } }
+                                },
+                                plugins: { legend: { display: false } }
+                            }
+                        });
+                    }
+
+                    // 4. 성공률 추이 차트 (Line)
+                    const successCtx = document.getElementById('successRateChart');
+                    if (successCtx && this.learningStats.weekly_success_rate) {
+                        if (window.successRateChartInstance) {
+                            window.successRateChartInstance.destroy();
+                        }
+
+                        const weekly = this.learningStats.weekly_success_rate;
+                        const labels = weekly.map(d => d.week.slice(5)); // MM-DD 형식
+                        const data = weekly.map(d => d.success_rate * 100);
+
+                        window.successRateChartInstance = new Chart(successCtx, {
+                            type: 'line',
+                            data: {
+                                labels: labels,
+                                datasets: [{
+                                    label: '성공률 (%)',
+                                    data: data,
+                                    borderColor: '#10b981',
+                                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                                    tension: 0.3,
+                                    fill: true,
+                                    pointBackgroundColor: '#ffffff',
+                                    pointBorderColor: '#10b981',
+                                    pointBorderWidth: 2
+                                }]
+                            },
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                scales: {
+                                    y: {
+                                        beginAtZero: true,
+                                        max: 100,
+                                        grid: { borderDash: [2, 4] },
+                                        ticks: { callback: val => val + '%' }
+                                    },
+                                    x: { grid: { display: false } }
+                                },
+                                plugins: { legend: { display: false } }
+                            }
+                        });
                     }
                 },
 

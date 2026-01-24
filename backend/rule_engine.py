@@ -24,8 +24,15 @@ from models import (
 
 class RuleEngine:
     """
-    결정론적 검증 엔진
-    - AI가 해석한 규칙을 받아서 실제 데이터에 적용
+    [결정론적 검증 엔진]
+    
+    AI가 해석한 JSON 형태의 규칙을 받아, Pandas DataFrame에 실제로 적용하고 오류를 검출합니다.
+    이 클래스는 100% 결정론적(Deterministic)으로 동작하며, 동일한 입력에 대해 항상 동일한 결과를 보장합니다.
+    
+    [주요 기능]
+    - 필수값, 중복, 형식(Regex), 범위(Range), 날짜 논리 등 기본 검증 수행
+    - 오류 메시지 생성 시 필드명 자동 치환
+    - 데이터 타입(숫자, 문자, 날짜)에 따른 유연한 처리
     """
     
     def __init__(self):
@@ -98,10 +105,10 @@ class RuleEngine:
         field = rule.field_name
         
         if field not in data.columns:
-            # 컬럼 자체가 없으면 모든 행에 대해 오류
-            for idx in range(len(data)):
+            # 컬럼 자체가 없으면 모든 행에 대해 오류 (단, 데이터가 있는 행에 대해서만)
+            for idx in data.index:
                 self._add_error(
-                    row=idx + 2,  # Excel 행 번호 (헤더 포함)
+                    row=idx + 2,
                     column=field,
                     rule=rule,
                     message=f"필수 컬럼 '{field}'가 존재하지 않습니다.",
@@ -109,8 +116,8 @@ class RuleEngine:
                 )
             return
         
-        # Null, NaN, 빈 문자열 체크
-        for idx, value in enumerate(data[field]):
+        # Null, NaN, 빈 문자열 체크 (인덱스 유지)
+        for idx, value in data[field].items():
             if pd.isna(value) or (isinstance(value, str) and value.strip() == ""):
                 self._add_error(
                     row=idx + 2,
@@ -129,8 +136,16 @@ class RuleEngine:
         if field not in data.columns:
             return
         
+        # 유효한 값(비어있지 않은 값)만 대상으로 중복 검사 수행
+        # NaN, None, 빈 문자열, 공백만 있는 문자열 제외
+        valid_mask = data[field].astype(str).str.strip().replace(['nan', 'None', 'NaT', ''], np.nan).notna()
+        valid_data = data[valid_mask]
+        
+        if valid_data.empty:
+            return
+
         # 중복 찾기
-        duplicates = data[data.duplicated(subset=[field], keep=False)]
+        duplicates = valid_data[valid_data.duplicated(subset=[field], keep=False)]
         
         for idx in duplicates.index:
             value = data.loc[idx, field]
@@ -153,26 +168,37 @@ class RuleEngine:
         if field not in data.columns:
             return
         
+        # Helper to normalize value for format checks
+        def normalize_val(v):
+            if pd.isna(v): return v
+            # If float ending in .0, convert to int then str
+            if isinstance(v, float) and v.is_integer():
+                return str(int(v))
+            return str(v)
+
         # allowed_values 검증
         if "allowed_values" in params:
             allowed = params["allowed_values"]
-            for idx, value in enumerate(data[field]):
-                if pd.notna(value) and value not in allowed:
-                    self._add_error(
-                        row=idx + 2,
-                        column=field,
-                        rule=rule,
-                        message=rule.error_message_template,
-                        actual_value=value,
-                        expected=f"{allowed} 중 하나"
-                    )
+            for idx, value in data[field].items():
+                if pd.notna(value):
+                    # Check both raw value and normalized string value
+                    norm_val = normalize_val(value)
+                    if value not in allowed and norm_val not in [str(a) for a in allowed]:
+                        self._add_error(
+                            row=idx + 2,
+                            column=field,
+                            rule=rule,
+                            message=rule.error_message_template,
+                            actual_value=value,
+                            expected=f"{allowed} 중 하나"
+                        )
         
         # regex 검증
         elif "regex" in params:
             pattern = re.compile(params["regex"])
-            for idx, value in enumerate(data[field]):
+            for idx, value in data[field].items():
                 if pd.notna(value):
-                    value_str = str(value)
+                    value_str = normalize_val(value)
                     if not pattern.match(value_str):
                         self._add_error(
                             row=idx + 2,
@@ -186,9 +212,10 @@ class RuleEngine:
         # format 검증 (예: YYYYMMDD)
         elif "format" in params:
             fmt = params["format"]
-            for idx, value in enumerate(data[field]):
+            for idx, value in data[field].items():
                 if pd.notna(value):
-                    if not self._check_date_format(str(value), fmt):
+                    value_str = normalize_val(value)
+                    if not self._check_date_format(value_str, fmt):
                         self._add_error(
                             row=idx + 2,
                             column=field,
@@ -213,7 +240,7 @@ class RuleEngine:
             min_date = params.get("min_date")
             max_date = params.get("max_date")
             
-            for idx, value in enumerate(data[field]):
+            for idx, value in data[field].items():
                 if pd.notna(value):
                     value_str = str(value)
                     if min_date and value_str < min_date:
@@ -240,7 +267,7 @@ class RuleEngine:
             min_val = params.get("min_value")
             max_val = params.get("max_value")
             
-            for idx, value in enumerate(data[field]):
+            for idx, value in data[field].items():
                 if pd.notna(value):
                     try:
                         num_val = float(value)
@@ -403,7 +430,7 @@ class RuleEngine:
             # 컬럼이 없으면 required 검증만 실패로 처리
             for v in validations:
                 if v.get("type") == "required":
-                    for idx in range(len(data)):
+                    for idx in data.index:
                         self._add_error(
                             row=idx + 2,
                             column=field,
@@ -413,8 +440,8 @@ class RuleEngine:
                         )
             return
 
-        # 각 행에 대해 모든 검증 조건 적용
-        for idx, value in enumerate(data[field]):
+        # 각 행에 대해 모든 검증 조건 적용 (인덱스 유지)
+        for idx, value in data[field].items():
             row_num = idx + 2  # Excel 행 번호
 
             for v in validations:
@@ -439,7 +466,15 @@ class RuleEngine:
                 if pd.isna(value) or (isinstance(value, str) and value.strip() == ""):
                     continue
 
+                # Helper to normalize value for format checks
+                def normalize_val(v):
+                    if pd.isna(v): return v
+                    if isinstance(v, float) and v.is_integer():
+                        return str(int(v))
+                    return str(v)
+
                 str_value = str(value).strip()
+                norm_value = normalize_val(value) # Normalized (e.g. "19881115")
 
                 # 2. Format 검증
                 if v_type == "format":
@@ -448,19 +483,17 @@ class RuleEngine:
                     # 정규식 검증
                     if "regex" in v_params:
                         import re
-                        if not re.match(v_params["regex"], str_value):
+                        # Check both original str_value and normalized value
+                        # (Original might be "19881115.0", Normalized "19881115")
+                        if not re.match(v_params["regex"], str_value) and not re.match(v_params["regex"], norm_value):
                             is_valid = False
 
                     # 허용값 목록 검증
                     elif "allowed_values" in v_params:
                         allowed = v_params["allowed_values"]
-                        if str_value not in allowed and value not in allowed:
-                            # 숫자로 변환해서도 체크
-                            try:
-                                if str(int(float(value))) not in [str(a) for a in allowed]:
-                                    is_valid = False
-                            except (ValueError, TypeError):
-                                is_valid = False
+                        # Check original, normalized, and numeric conversion
+                        if str_value not in allowed and value not in allowed and norm_value not in [str(a) for a in allowed]:
+                            is_valid = False
 
                     if not is_valid:
                         self._add_error(
@@ -521,7 +554,7 @@ class RuleEngine:
             if v.get("type") == "no_duplicates":
                 v_error_msg = v.get("error_message", f"{field}이(가) 중복되었습니다.")
                 seen = {}
-                for idx, value in enumerate(data[field]):
+                for idx, value in data[field].items():
                     if pd.isna(value) or (isinstance(value, str) and value.strip() == ""):
                         continue
 
@@ -679,8 +712,22 @@ def validate_data(
 
 class KIFRS_RuleEngine:
     """
-    K-IFRS 1019 관점의 논리 및 회계 검증 엔진
-    - 1단계 기본 검증을 통과한 데이터를 대상으로 심층 분석
+    [K-IFRS 1019 특화 검증 엔진]
+    
+    기본적인 데이터 정합성 검증(1단계) 이후, 퇴직급여부채 평가를 위한 
+    회계적/보험수리적 관점의 심층 검증을 수행합니다.
+    
+    [검증 항목]
+    1. 완전성(Completeness): 필수 평가 요소(사번, 입사일, 급여 등) 누락 확인
+    2. 유효성(Validity): 평가기준일 대비 미래 입사일 등 논리적 모순 확인
+    3. 일관성(Consistency): 
+       - 입사일 vs 퇴사일 역전
+       - 관계사 전입일 vs 현사 입사일 역전
+       - **입사 시 연령 체크 (만 15세 미만 등)**
+    4. 가정 검증(Actuarial Assumptions):
+       - 할인율 (0.5% ~ 15% 범위 체크)
+       - 임금상승률 (0% ~ 20% 범위 체크)
+    5. 이상치(Outliers): 평균임금 3시그마 벗어나는 값 탐지
     """
     
     def __init__(self, data: pd.DataFrame):
@@ -708,12 +755,46 @@ class KIFRS_RuleEngine:
         self._check_completeness()
         self._check_validity()
         self._check_consistency()
+        self._check_actuarial_assumptions() # 신규 추가
         if reconciliation_params:
             self._check_reconciliation(reconciliation_params)
         self._check_outliers()
         self._check_roll_forward_skeleton() # 골격만 구현
 
         return self.errors
+
+    def _check_actuarial_assumptions(self):
+        """보험수리적 가정(할인율, 임금상승률 등)의 합리적 범위 검증"""
+        # 1. 할인율 (Discount Rate) 검증 (예: 1% ~ 10%)
+        discount_cols = [c for c in self.data.columns if any(kw in c.lower() for kw in ['discount', '할인율'])]
+        for col in discount_cols:
+            invalid_rates = self.data[self.data[col].notna()]
+            for idx, row in invalid_rates.iterrows():
+                val = float(row[col])
+                # 보통 백분율(2.5) 또는 소수점(0.025)으로 입력됨
+                rate = val if val < 1 else val / 100
+                if rate < 0.005 or rate > 0.15: # 0.5% 미만 또는 15% 초과 시 경고
+                    self._add_kifrs_error(
+                        row=idx + 2, column=col,
+                        message=f"보험수리적 가정(할인율: {val}%)이 통상적인 범위를 벗어납니다 (권장: 1%~10%).",
+                        actual_value=val, rule_id="KIFRS_ASSUMPTION_DISCOUNT",
+                        expected="1% ~ 10%"
+                    )
+
+        # 2. 임금상승률 (Salary Increase Rate) 검증 (예: 0% ~ 15%)
+        salary_inc_cols = [c for c in self.data.columns if any(kw in c.lower() for kw in ['salary_increase', '임금상승률', '급여인상률'])]
+        for col in salary_inc_cols:
+            invalid_rates = self.data[self.data[col].notna()]
+            for idx, row in invalid_rates.iterrows():
+                val = float(row[col])
+                rate = val if val < 1 else val / 100
+                if rate < 0 or rate > 0.20: # 0% 미만 또는 20% 초과 시 경고
+                    self._add_kifrs_error(
+                        row=idx + 2, column=col,
+                        message=f"보험수리적 가정(임금상승률: {val}%)이 통상적인 범위를 벗어납니다 (권장: 0%~15%).",
+                        actual_value=val, rule_id="KIFRS_ASSUMPTION_SALARY",
+                        expected="0% ~ 15%"
+                    )
 
     def _add_kifrs_error(self, row: int, column: str, message: str, actual_value: Any, rule_id: str, expected: Optional[str] = None):
         """K-IFRS 검증 오류 추가"""
@@ -796,6 +877,22 @@ class KIFRS_RuleEngine:
                     actual_value=f"First Hire: {row_data['first_hire_date_affiliated'].date()}, Current Hire: {row_data['hire_date'].date()}",
                     rule_id="KIFRS_CONSISTENCY_FIRST_HIRE"
                 )
+
+        # (신규) 입사 시 연령 검증 (만 15세 미만 등 체크)
+        if 'hire_date' in self.data.columns and 'birth_date' in self.data.columns:
+            for idx, row_data in self.data.dropna(subset=['hire_date', 'birth_date']).iterrows():
+                try:
+                    age_at_hire = row_data['hire_date'].year - row_data['birth_date'].year
+                    if age_at_hire < 15: # 법정 취업 가능 연령 기준 경고
+                        self._add_kifrs_error(
+                            row=idx + 2, column='hire_date',
+                            message=f"입사 시 연령이 만 {age_at_hire}세로 매우 낮습니다. 데이터 확인이 필요합니다.",
+                            actual_value=f"만 {age_at_hire}세",
+                            rule_id="KIFRS_CONSISTENCY_AGE_AT_HIRE",
+                            expected="만 15세 이상"
+                        )
+                except:
+                    pass
     
     # (4) 집계 리콘 검증
     def _check_reconciliation(self, params: Dict[str, Any]):

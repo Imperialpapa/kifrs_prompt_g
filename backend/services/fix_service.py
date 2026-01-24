@@ -441,13 +441,15 @@ class FixService:
         if fix_type == 'date_format':
             # 1. 시리얼 번호(숫자)인 경우 처리 (예: 45292)
             try:
-                # 1900년 이후의 합리적인 날짜 범위인지 확인 (약 1900년~2100년)
                 num_val = float(value)
+                # 시리얼 날짜 범위 (1 ~ 100,000 -> 1900년 ~ 2173년)
                 if 1 <= num_val <= 100000: 
-                    # 엑셀 시리얼 -> datetime 변환
-                    # (엑셀의 1900-02-29 버그 무시하고 대략적인 변환)
                     dt = pd.to_datetime(num_val, unit='D', origin='1899-12-30')
                     return dt.strftime('%Y%m%d')
+                
+                # 이미 YYYYMMDD 숫자인 경우 (예: 19881115.0) -> 문자열로 변환
+                if 19000101 <= num_val <= 21001231:
+                    return str(int(num_val))
             except (ValueError, TypeError):
                 pass
 

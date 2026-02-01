@@ -2,6 +2,7 @@
 import asyncio
 import sys
 import os
+import pytest
 from unittest.mock import MagicMock, AsyncMock
 
 # Add backend to path
@@ -24,15 +25,115 @@ class MockAIInterpreter:
             "model_version": "mock-ai"
         }
 
+class MockSupabaseClient:
+    def __init__(self):
+        self._data = {
+            "rule_patterns": [],
+            "rule_files": [],
+            "rules": [],
+            "pattern_feedback": []
+        }
+        
+    def table(self, table_name):
+        self.current_table = table_name
+        return self
+        
+    def select(self, *args, **kwargs):
+        return self
+        
+    def insert(self, data):
+        if isinstance(data, dict):
+            # Assign ID if not present
+            if 'id' not in data:
+                data['id'] = str(uuid.uuid4())
+            self._data[self.current_table].append(data)
+            self._last_data = [data]
+        elif isinstance(data, list):
+             for item in data:
+                if 'id' not in item:
+                    item['id'] = str(uuid.uuid4())
+             self._data[self.current_table].extend(data)
+             self._last_data = data
+        return self
+        
+    def update(self, data):
+        # Very basic mock update - updates last inserted or all (not accurate but enough for this test flow)
+        # For more accuracy we need `eq` handling, implemented below
+        self._update_data = data
+        return self
+        
+    def eq(self, column, value):
+        # Handle select/update filtering
+        # Return filtered data for select, or apply update
+        if hasattr(self, '_update_data'):
+            # Update logic
+            for item in self._data[self.current_table]:
+                if item.get(column) == value:
+                    item.update(self._update_data)
+            del self._update_data
+        
+        # Filter logic for select/delete
+        self._filter_column = column
+        self._filter_value = value
+        return self
+
+    def gte(self, column, value):
+        return self
+        
+    def order(self, *args, **kwargs):
+        return self
+        
+    def limit(self, *args, **kwargs):
+        return self
+
+    def single(self):
+        self._is_single = True
+        return self
+
+    def execute(self):
+        # Return result with .data
+        class Result:
+            pass
+        res = Result()
+        
+        # Filter data if filter was set
+        if hasattr(self, '_filter_column'):
+            col = self._filter_column
+            val = self._filter_value
+            filtered = [item for item in self._data.get(self.current_table, []) if item.get(col) == val]
+            # Reset filter
+            del self._filter_column
+            del self._filter_value
+        elif hasattr(self, '_last_data'):
+             filtered = self._last_data
+             del self._last_data
+        else:
+             filtered = self._data.get(self.current_table, [])
+             
+        if hasattr(self, '_is_single') and self._is_single:
+            res.data = filtered[0] if filtered else None
+            del self._is_single
+        else:
+            res.data = filtered
+             
+        return res
+        
+    def delete(self):
+        return self
+
+import uuid
+
+@pytest.mark.asyncio
 async def test_learning_cycle():
     print("\n[Test] Starting Learning Cycle Integration Test")
     
     # 1. Initialize Services
-    learning_service = LearningService(supabase_client=supabase)
+    # Use real supabase if available, else mock
+    client = supabase if supabase else MockSupabaseClient()
+    learning_service = LearningService(supabase_client=client)
     mock_ai = MockAIInterpreter()
     
     # Test Data
-    import uuid
     unique_suffix = str(uuid.uuid4())[:8]
     rule_text = f"테스트 규칙: 값은 100 이상이어야 함 ({unique_suffix})"
     field_name = "test_field"
@@ -83,7 +184,7 @@ async def test_learning_cycle():
         "sheet_count": 1,
         "status": "active"
     }
-    file_res = supabase.table('rule_files').insert(file_data).execute()
+    file_res = client.table('rule_files').insert(file_data).execute()
     file_id = file_res.data[0]['id']
     
     # Create Rule
@@ -98,7 +199,7 @@ async def test_learning_cycle():
         "ai_parameters": {"min_value": 100},
         "is_active": True
     }
-    rule_res = supabase.table('rules').insert(rule_data).execute()
+    rule_res = client.table('rules').insert(rule_data).execute()
     real_rule_id = rule_res.data[0]['id']
     
     # 5. Record Feedback
@@ -122,9 +223,9 @@ async def test_learning_cycle():
     
     # Cleanup
     print("[Test] 6. Cleaning up...")
-    supabase.table('rules').delete().eq('id', real_rule_id).execute()
-    supabase.table('rule_files').delete().eq('id', file_id).execute()
-    supabase.table('rule_patterns').delete().eq('id', pattern_id).execute()
+    client.table('rules').delete().eq('id', real_rule_id).execute()
+    client.table('rule_files').delete().eq('id', file_id).execute()
+    client.table('rule_patterns').delete().eq('id', pattern_id).execute()
     
     print("\n[Test] Cycle Completed Successfully!")
 

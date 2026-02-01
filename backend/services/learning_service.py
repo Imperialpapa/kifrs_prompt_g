@@ -4,13 +4,19 @@ Learning AI Service - 학습 기반 규칙 해석 시스템
 사용자 피드백을 학습하여 규칙 해석 정확도를 지속적으로 개선
 
 핵심 기능:
-1. 패턴 학습: 사용자 확정 매핑을 패턴으로 저장
-2. 패턴 매칭: 새 규칙 해석 시 학습된 패턴 우선 검색
+1. 패턴 학습: 사용자 확정 매핑을 패턴으로 저장 (AI 신뢰도 반영)
+2. 패턴 매칭: 
+   - 인메모리 캐시 (Exact Match)
+   - DB 정밀 매칭
+   - 필드명 기반 우선 검색 (Context Aware)
+   - 인덱스 기반 전역 유사 검색 (Fast Global Search)
 3. 피드백 수집: 검증 결과(성공/실패)를 수집하여 신뢰도 조정
-4. 통계 제공: 학습 현황, 정확도 추이 등
+4. 생명주기 관리:
+   - 저신뢰 패턴 자동 비활성화 (status='inactive')
+   - 패턴 복구 (reactivate)
+   - 고성공률 패턴 확정
 
 확장 계획:
-- 유사도 기반 퍼지 매칭
 - 클라우드 AI 모델 파인튜닝 연동
 - 조직별 학습 모델 분리
 """
@@ -142,8 +148,13 @@ class LearningService:
             supabase_client: Supabase 클라이언트 (없으면 인메모리 모드)
         """
         self.client = supabase_client
-        self._memory_patterns: Dict[str, Dict] = {}  # 인메모리 캐시
+        self._memory_patterns: Dict[str, Dict] = {}  # 인메모리 캐시 (Hash Search용)
         self._memory_feedback: List[Dict] = []
+        
+        # Pattern Indexing for fast search
+        self._cached_pattern_list: List[Dict] = []
+        self._last_pattern_sync_time: Optional[datetime] = None
+        
         self._tfidf_calculator = TFIDFCalculator()  # TF-IDF 계산기
         self._tfidf_initialized = False  # 코퍼스 초기화 여부
         print("[LearningService] Initialized")
@@ -218,10 +229,16 @@ class LearningService:
         ai_parameters: Dict,
         ai_error_message: str,
         source_rule_id: Optional[str] = None,
-        confidence_boost: float = 0.0
+        confidence_boost: float = 0.0,
+        source_ai_confidence: Optional[float] = None
     ) -> Dict[str, Any]:
         """
-        학습된 패턴 저장
+        학습된 패턴 저장 또는 업데이트
+
+        기능:
+        - 새 패턴 저장: 초기 신뢰도는 AI 신뢰도와 0.95 중 작은 값 사용
+        - 기존 패턴 업데이트: 사용 횟수 증가 및 신뢰도 상승
+        - 비활성 패턴 복구: 'inactive' 상태인 패턴을 다시 'active'로 전환
 
         Args:
             rule_text: 원본 규칙 텍스트
@@ -231,12 +248,19 @@ class LearningService:
             ai_error_message: 오류 메시지
             source_rule_id: 원본 규칙 ID (추적용)
             confidence_boost: 신뢰도 보너스
+            source_ai_confidence: AI 해석 신뢰도 (초기값 반영용)
 
         Returns:
             저장된 패턴 정보
         """
         pattern_hash = self.compute_pattern_hash(rule_text)
         normalized_text = self.normalize_rule_text(rule_text)
+
+        # 기본 신뢰도 결정 (AI 신뢰도 반영)
+        if source_ai_confidence is not None:
+            base_confidence = min(0.95, source_ai_confidence)
+        else:
+            base_confidence = 0.95  # 사용자 확정 기본값
 
         pattern_data = {
             "id": str(uuid4()),
@@ -247,14 +271,15 @@ class LearningService:
             "ai_rule_type": ai_rule_type,
             "ai_parameters": ai_parameters,
             "ai_error_message": ai_error_message,
-            "confidence_score": min(1.0, 0.95 + confidence_boost),  # 학습 패턴은 기본 95% + 보너스
+            "confidence_score": min(1.0, base_confidence + confidence_boost),
             "usage_count": 1,
             "success_count": 0,
             "failure_count": 0,
             "source_rule_id": source_rule_id,
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
-            "is_active": True
+            "is_active": True,
+            "status": "active"
         }
 
         if self.client:
@@ -263,8 +288,7 @@ class LearningService:
                 existing = self.client.table('rule_patterns') \
                     .select('*') \
                     .eq('pattern_hash', pattern_hash) \
-                    .eq('is_active', True) \
-                    .execute()
+                    .execute() # is_active 조건 제거하여 비활성 패턴도 검색
 
                 if existing.data:
                     # 기존 패턴 업데이트 (usage_count 증가)
@@ -275,7 +299,9 @@ class LearningService:
                         "ai_error_message": ai_error_message,
                         "usage_count": old_pattern.get("usage_count", 0) + 1,
                         "confidence_score": min(1.0, old_pattern.get("confidence_score", 0.95) + 0.01),
-                        "updated_at": datetime.now().isoformat()
+                        "updated_at": datetime.now().isoformat(),
+                        "is_active": True, # 재활성화
+                        "status": "active" # 상태 업데이트
                     }
                     self.client.table('rule_patterns') \
                         .update(update_data) \
@@ -305,7 +331,9 @@ class LearningService:
                 "ai_rule_type": ai_rule_type,
                 "ai_parameters": ai_parameters,
                 "ai_error_message": ai_error_message,
-                "updated_at": datetime.now().isoformat()
+                "updated_at": datetime.now().isoformat(),
+                "is_active": True,
+                "status": "active"
             })
             # Sync with DB data if available
             if self.client:
@@ -318,6 +346,98 @@ class LearningService:
 
         return pattern_data
 
+    async def reactivate_pattern(self, pattern_id: str) -> bool:
+        """
+        비활성화된 패턴 다시 활성화
+        """
+        if not self.client:
+            return False
+
+        try:
+            result = self.client.table('rule_patterns') \
+                .update({
+                    "status": "active", 
+                    "is_active": True,
+                    "updated_at": datetime.now().isoformat()
+                }) \
+                .eq('id', pattern_id) \
+                .execute()
+            
+            if result.data:
+                print(f"[LearningService] Reactivated pattern: {pattern_id}")
+                return True
+        except Exception as e:
+            print(f"[LearningService] Reactivate error: {e}")
+        
+        return False
+
+    def _find_best_match(
+        self,
+        patterns: List[Dict[str, Any]],
+        rule_text: str,
+        threshold: float
+    ) -> Optional[Dict[str, Any]]:
+        """
+        주어진 패턴 목록에서 최적의 매칭 패턴 찾기
+        """
+        if not patterns:
+            return None
+            
+        normalized_text = self.normalize_rule_text(rule_text)
+        best_match = None
+        best_score = 0.0
+
+        for pattern in patterns:
+            score = self._calculate_similarity(
+                normalized_text,
+                pattern.get('normalized_text', '')
+            )
+            if score > best_score and score >= threshold:
+                best_score = score
+                best_match = pattern
+
+        if best_match:
+            return {
+                **best_match,
+                "match_type": "similar",
+                "match_score": best_score
+            }
+        return None
+
+    async def _sync_patterns_from_db(self, max_age_seconds: int = 3600):
+        """
+        DB에서 패턴을 메모리로 동기화 (주기적 실행)
+        """
+        now = datetime.now()
+        if (self._last_pattern_sync_time and 
+            (now - self._last_pattern_sync_time).total_seconds() < max_age_seconds and
+            self._cached_pattern_list):
+            return
+
+        if self.client:
+            try:
+                # 활성 패턴 전체 로드 (최대 2000개 제한)
+                result = self.client.table('rule_patterns') \
+                    .select('*') \
+                    .eq('is_active', True) \
+                    .gte('confidence_score', 0.5) \
+                    .order('usage_count', desc=True) \
+                    .limit(2000) \
+                    .execute()
+
+                if result.data:
+                    self._cached_pattern_list = result.data
+                    self._last_pattern_sync_time = now
+                    
+                    # TF-IDF 코퍼스도 업데이트
+                    texts = [p.get('normalized_text', '') for p in result.data if p.get('normalized_text')]
+                    self._tfidf_calculator.update_corpus(texts)
+                    self._tfidf_initialized = True
+                    
+                    print(f"[LearningService] Synced {len(self._cached_pattern_list)} patterns to memory index")
+            except Exception as e:
+                print(f"[LearningService] Pattern sync error: {e}")
+
     async def find_matching_pattern(
         self,
         rule_text: str,
@@ -326,6 +446,12 @@ class LearningService:
     ) -> Optional[Dict[str, Any]]:
         """
         학습된 패턴에서 매칭 검색
+
+        검색 전략:
+        1. 인메모리 캐시 확인 (Exact Match)
+        2. DB 정확 매칭 확인 (Exact Match)
+        3. 필드명 기반 유사 패턴 검색 (Context Match) - 같은 필드의 패턴 우선
+        4. 전체 유사 패턴 검색 (Global Match) - 인메모리 인덱스 활용
 
         Args:
             rule_text: 검색할 규칙 텍스트
@@ -350,6 +476,7 @@ class LearningService:
         # 2. DB 검색 (정확히 일치하는 패턴)
         if self.client:
             try:
+                # 2-1. Exact Match Check
                 result = self.client.table('rule_patterns') \
                     .select('*') \
                     .eq('pattern_hash', pattern_hash) \
@@ -368,58 +495,40 @@ class LearningService:
                         "match_score": 1.0
                     }
 
-                # 3. 유사 패턴 검색 (DB) - 확장된 검색 범위
                 # TF-IDF 코퍼스 초기화 (처음 검색 시 한 번만)
                 await self._initialize_tfidf_corpus()
 
-                all_patterns = self.client.table('rule_patterns') \
-                    .select('*') \
-                    .eq('is_active', True) \
-                    .gte('confidence_score', 0.7) \
-                    .order('usage_count', desc=True) \
-                    .limit(500) \
-                    .execute()
+                # 2-2. 같은 필드의 패턴에서 우선 검색 (유사도 매칭)
+                if field_name:
+                    field_patterns = self.client.table('rule_patterns') \
+                        .select('*') \
+                        .eq('field_name_hint', field_name) \
+                        .eq('is_active', True) \
+                        .execute()
 
-                if all_patterns.data:
-                    best_match = None
-                    best_score = 0
+                    if field_patterns.data:
+                        best_match = self._find_best_match(field_patterns.data, rule_text, threshold)
+                        if best_match:
+                            print(f"[LearningService] Field match found: {best_match['ai_rule_type']} (score: {best_match['match_score']:.2f})")
+                            return best_match
 
-                    for pattern in all_patterns.data:
-                        # Cache loaded patterns for future similar search (optional, maybe too much memory?)
-                        # self._memory_patterns[pattern['pattern_hash']] = pattern 
-                        
-                        score = self._calculate_similarity(
-                            normalized_text,
-                            pattern.get('normalized_text', '')
-                        )
-                        if score > best_score and score >= threshold:
-                            best_score = score
-                            best_match = pattern
+                # 2-3. 전체 유사 패턴 검색 (인메모리 인덱스 활용)
+                await self._sync_patterns_from_db()
 
+                if self._cached_pattern_list:
+                    best_match = self._find_best_match(self._cached_pattern_list, rule_text, threshold)
                     if best_match:
-                        print(f"[LearningService] Similar match found: {best_match['ai_rule_type']} (score: {best_score:.2f})")
-                        return {
-                            **best_match,
-                            "match_type": "similar",
-                            "match_score": best_score
-                        }
+                        print(f"[LearningService] Global match found (Index): {best_match['ai_rule_type']} (score: {best_match['match_score']:.2f})")
+                        return best_match
 
             except Exception as e:
                 print(f"[LearningService] DB search error: {e}")
 
-        # 4. 유사 패턴 검색 (인메모리 fallback - DB 없을 때)
+        # 3. 유사 패턴 검색 (인메모리 fallback - DB 없을 때)
         if not self.client:
-            for hash_key, pattern in self._memory_patterns.items():
-                score = self._calculate_similarity(
-                    normalized_text,
-                    pattern.get('normalized_text', '')
-                )
-                if score >= threshold:
-                    return {
-                        **pattern,
-                        "match_type": "similar",
-                        "match_score": score
-                    }
+            best_match = self._find_best_match(list(self._memory_patterns.values()), rule_text, threshold)
+            if best_match:
+                return best_match
 
         return None
 
@@ -921,7 +1030,8 @@ class LearningService:
                 ai_parameters=ai_interpretation.get('parameters', {}),
                 ai_error_message=ai_interpretation.get('error_message', ''),
                 source_rule_id=rule_id,
-                confidence_boost=0.05  # 자동 학습은 낮은 부스트
+                confidence_boost=0.05,  # 자동 학습은 낮은 부스트
+                source_ai_confidence=ai_confidence  # AI 신뢰도 반영
             )
             print(f"[AutoLearn] Pattern saved: {pattern.get('pattern_hash', '')[:8]}... (success: {validation_success_rate:.1%})")
             return pattern
@@ -939,8 +1049,13 @@ class LearningService:
         저신뢰 패턴 자동 비활성화
 
         조건:
-        - 피드백 5회 이상
-        - 성공률 < 60%
+        - 피드백 5회 이상 수집됨
+        - 성공률 < 60% (기본값)
+
+        동작:
+        - is_active = False 설정
+        - status = 'inactive' 설정
+        - 메모리 캐시에서 제거
 
         Args:
             threshold: 성공률 임계값 (기본 0.6 = 60%)
@@ -986,6 +1101,7 @@ class LearningService:
                     self.client.table('rule_patterns') \
                         .update({
                             'is_active': False,
+                            'status': 'inactive',
                             'updated_at': datetime.now().isoformat(),
                             'deactivated_reason': f'Low success rate: {success_rate:.1%}'
                         }) \

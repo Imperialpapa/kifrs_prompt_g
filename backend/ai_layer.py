@@ -134,6 +134,16 @@ class AIRuleInterpreter:
         # 1. 로컬 휴리스틱 엔진 실행 (즉각적인 수정 제안)
         local_suggestions = self._local_fix_engine(errors)
         
+        # 컬럼별 규칙 매핑 생성 (Cloud 결과 검증용)
+        column_rule_map = {}
+        for err in errors:
+            col = err.get('column')
+            if col:
+                column_rule_map[col] = {
+                    "type": err.get('rule_type'),
+                    "params": err.get('rule_params', {})
+                }
+
         target_provider = (provider or self.default_provider).lower()
         use_cloud = self._check_provider_availability(target_provider)
 
@@ -145,13 +155,81 @@ class AIRuleInterpreter:
                 ai_response = await self._call_cloud_ai(prompt, target_provider)
                 cloud_suggestions = self._parse_correction_response(ai_response)
                 
+                # 클라우드 제안에 대해서도 안전 검증 적용
+                valid_cloud_suggestions = self._filter_invalid_suggestions(cloud_suggestions, column_rule_map)
+                
                 # 클라우드 제안이 있으면 우선 사용 (병합)
-                return cloud_suggestions if cloud_suggestions else local_suggestions
+                return valid_cloud_suggestions if valid_cloud_suggestions else local_suggestions
             except Exception as e:
                 print(f"[AI] Cloud correction failed ({target_provider}), using local engine: {e}")
                 return local_suggestions
         
         return local_suggestions
+
+    def _filter_invalid_suggestions(self, suggestions: List[FixSuggestion], column_rule_map: Dict[str, Any] = None) -> List[FixSuggestion]:
+        """
+        AI가 생성한 제안 중 논리적으로 맞지 않는 항목 필터링
+        
+        필터링 조건:
+        1. 금액/숫자 필드인데 '날짜 형식'으로 수정하려는 경우
+        2. 금액/숫자 필드인데 수정된 값이 숫자가 아닌 경우
+        """
+        valid_suggestions = []
+        column_rule_map = column_rule_map or {}
+        
+        # 금액/숫자 관련 필드 키워드 (로컬 엔진과 동일하게 유지)
+        numeric_field_keywords = [
+            "급여", "금액", "수당", "원", "임금", "보수", "연봉", "월급",
+            "salary", "amount", "wage", "pay", "bonus", "income",
+            "기준급", "평균급", "통상급", "퇴직금", "retirement"
+        ]
+        
+        for sugg in suggestions:
+            field = sugg.column
+            fixed_val = str(sugg.fixed_value)
+            
+            field_lower = field.lower()
+            
+            # 규칙 정보 확인
+            rule_info = column_rule_map.get(field, {})
+            rule_type = rule_info.get("type")
+            rule_params = rule_info.get("params", {}) or {}
+
+            # 숫자형 필드 판단 (규칙 + 키워드)
+            is_numeric_rule = rule_type == 'range' or \
+                              (rule_type == 'format' and 'numeric' in str(rule_params)) or \
+                              (rule_type == 'custom' and any(kw in str(rule_params) for kw in ['number', 'amount', '금액']))
+            
+            is_numeric_keyword = any(kw in field for kw in numeric_field_keywords) or \
+                                 any(kw in field_lower for kw in ["salary", "amount", "wage", "pay"])
+            
+            is_numeric_field = is_numeric_rule or is_numeric_keyword
+            
+            # 숫자 필드 안전 검증
+            if is_numeric_field:
+                # 1. 수정된 값이 날짜 형식(YYYYMMDD)인 경우 거부
+                # (단, 8자리 숫자일 수 있으므로, 원본이 이미 날짜 형식이면 날짜로 오인된 것임)
+                is_fixed_date_format = bool(re.match(r'^(19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$', fixed_val))
+                
+                # 원본이 날짜 구분자가 있는 형태였는데(2023-01-01), 결과가 8자리 숫자라면 -> 날짜 포맷팅으로 간주하고 제거
+                is_original_date_like = bool(re.match(r'^\d{4}[-./]\d{2}[-./]\d{2}$', str(sugg.original_value)))
+                
+                if is_original_date_like and is_fixed_date_format:
+                    print(f"[AI] Filtered unsafe suggestion for numeric field '{field}': {sugg.original_value} -> {fixed_val} (Date format detected)")
+                    continue
+                    
+                # 2. 수정된 값이 숫자가 아닌 경우 거부
+                # (공백 제거나 콤마 제거는 허용하되, 문자가 포함되면 안됨)
+                cleaned_val = re.sub(r'[,\s]', '', fixed_val)
+                try:
+                    float(cleaned_val)
+                except ValueError:
+                    print(f"[AI] Filtered non-numeric suggestion for numeric field '{field}': {fixed_val}")
+                    continue
+
+            valid_suggestions.append(sugg)
+            
+        return valid_suggestions
 
     async def get_error_explanation(
         self, 
@@ -1143,6 +1221,10 @@ class AIRuleInterpreter:
             val = str(err.get('actual_value', ''))
             field = str(err.get('column', ''))
             msg = str(err.get('message', ''))
+            
+            # 규칙 문맥 활용
+            rule_type = err.get('rule_type', '')
+            rule_params = err.get('rule_params', {}) or {}
 
             # Skip invalid values
             if val == 'None' or val == 'nan' or not val:
@@ -1155,23 +1237,40 @@ class AIRuleInterpreter:
 
             field_lower = field.lower()
 
-            # 필드 타입 판별
-            is_numeric_field = any(kw in field for kw in numeric_field_keywords) or \
-                               any(kw in field_lower for kw in ["salary", "amount", "wage", "pay"])
-            is_date_field = any(kw in field for kw in date_field_keywords) or \
-                            any(kw in field_lower for kw in ["date"])
+            # 필드 타입 판별 (규칙 우선)
+            # 1. 숫자형 필드 판단
+            is_numeric_rule = rule_type == 'range' or \
+                              (rule_type == 'format' and 'numeric' in str(rule_params)) or \
+                              (rule_type == 'custom' and any(kw in str(rule_params) for kw in ['number', 'amount', '금액']))
+            
+            is_numeric_keyword = any(kw in field for kw in numeric_field_keywords) or \
+                                 any(kw in field_lower for kw in ["salary", "amount", "wage", "pay"])
+            
+            is_numeric_field = is_numeric_rule or is_numeric_keyword
 
-            # 입력값이 날짜 형식인지 확인
+            # 2. 날짜형 필드 판단
+            is_date_rule = rule_type == 'date_logic' or \
+                           (rule_type == 'format' and ('YYYY' in str(rule_params) or 'date' in str(rule_params)))
+                           
+            is_date_keyword = any(kw in field for kw in date_field_keywords) or \
+                              any(kw in field_lower for kw in ["date"])
+            
+            is_date_field = is_date_rule or is_date_keyword
+
+            # 입력값이 날짜 형식인지 확인 (예: 2023-01-01, 2023.01.01, 2023/01/01)
             is_date_value = bool(re.match(r'^\d{4}[-./]\d{2}[-./]\d{2}$', val))
 
-            # 1. 금액 필드에 날짜가 들어간 경우 → 자동수정 불가
+            # 1. 금액/숫자 필드에 날짜가 들어간 경우 → 자동수정 불가
+            # 이 경우는 단순히 형식이 틀린 게 아니라 데이터 자체가 잘못 들어온 것이므로 
+            # 형식을 바꾸는 수정(YYYYMMDD)을 제안하면 안 됨.
             if is_numeric_field and is_date_value:
-                # 이 경우는 완전히 잘못된 데이터이므로 수정 제안하지 않음
-                # (자동 수정 불가능한 케이스)
                 continue
 
             # 2. 날짜 필드에서 날짜 형식 표준화 (YYYYMMDD)
-            if is_date_field and ("YYYYMMDD" in msg or "날짜" in msg or "형식" in msg):
+            # 규칙 자체가 날짜 형식을 요구할 때만 제안
+            is_date_format_error = any(kw in msg for kw in ["YYYYMMDD", "날짜", "형식"])
+            
+            if is_date_field and is_date_format_error:
                 # 2023-01-01 -> 20230101
                 if re.match(r'^\d{4}-\d{2}-\d{2}$', val):
                     fixed = val.replace("-", "")

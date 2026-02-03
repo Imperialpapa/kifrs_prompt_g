@@ -28,7 +28,10 @@ class FixService:
         print(f"[FixService] Generating suggestions for session: {session_id} using {provider}")
         
         try:
-            # 1. 현재 오류 데이터 조회
+            # 1. 현재 오류 데이터 조회 (규칙 정보 포함)
+            # validation_errors 테이블에 rule_id가 있으므로, rules 테이블과 조인하거나 별도로 조회 필요
+            # Supabase client가 조인을 지원하는지 확인 필요. 여기서는 error를 먼저 조회하고 rule을 별도 조회
+            
             query = self.validation_repo.client.table('validation_errors') \
                 .select('*') \
                 .eq('session_id', session_id)
@@ -41,6 +44,26 @@ class FixService:
             
             if not errors:
                 return []
+
+            # 규칙 정보 로드
+            rule_ids = list(set(err['rule_id'] for err in errors if err.get('rule_id')))
+            rules_map = {}
+            if rule_ids:
+                try:
+                    # rule_id가 실제 UUID가 아닐 수 있음 (예: "RULE_001"). 
+                    # DB의 rules 테이블은 UUID id를 가짐. 
+                    # validation_errors.rule_id가 rules.rule_id (string)를 참조하는지, rules.id (uuid)를 참조하는지 확인 필요.
+                    # 모델 정의상 ValidationError.rule_id는 string. Rule.rule_id도 string.
+                    
+                    rules_result = self.rule_repo.client.table('rules') \
+                        .select('rule_id, ai_rule_type, ai_parameters, field_name') \
+                        .in_('rule_id', rule_ids) \
+                        .execute()
+                    
+                    for r in rules_result.data:
+                        rules_map[r['rule_id']] = r
+                except Exception as e:
+                    print(f"[FixService] Failed to load rules: {e}")
                 
             # 2. 과거 수정 이력 조회 (Learning / RAG)
             # 최근 50개의 성공적인 수정 사례를 가져와 AI에게 '학습' 시킴
@@ -56,14 +79,21 @@ class FixService:
                 print(f"[FixService] History lookup failed (non-critical): {e}")
 
             # 3. AI/로컬 엔진 호출
-            formatted_errors = [{
-                "id": err['id'],
-                "sheet": err['sheet_name'],
-                "row": err['row_number'],
-                "column": err['column_name'],
-                "actual_value": err['actual_value'],
-                "message": err['error_message']
-            } for err in errors]
+            formatted_errors = []
+            for err in errors:
+                rule_info = rules_map.get(err.get('rule_id'), {})
+                formatted_errors.append({
+                    "id": err['id'],
+                    "sheet": err['sheet_name'],
+                    "row": err['row_number'],
+                    "column": err['column_name'],
+                    "actual_value": err['actual_value'],
+                    "message": err['error_message'],
+                    # 규칙 문맥 추가
+                    "rule_type": rule_info.get('ai_rule_type'),
+                    "rule_params": rule_info.get('ai_parameters'),
+                    "rule_field": rule_info.get('field_name')
+                })
 
             suggestions = await self.ai_interpreter.suggest_corrections(
                 formatted_errors, 
@@ -298,7 +328,7 @@ class FixService:
             try:
                 cell = ws.cell(row=row, column=col_idx)
                 original_value = cell.value
-                fixed_value = self._convert_value(original_value, fix_type)
+                fixed_value = self._convert_value(original_value, fix_type, column)
 
                 if fixed_value is not None and fixed_value != original_value:
                     # 값 수정
@@ -425,20 +455,31 @@ class FixService:
 
         return output.getvalue()
 
-    def _convert_value(self, value: Any, fix_type: str) -> Any:
+    def _convert_value(self, value: Any, fix_type: str, column_name: str = "") -> Any:
         """
-        값 변환 로직
+        값 변환 로직 (안전 장치 포함)
         """
         if value is None:
             return None
 
-        # datetime 객체인 경우 (최우선 처리)
+        # 날짜 관련 필드 키워드 (오변환 방지용)
+        date_field_keywords = ["일", "일자", "date", "날짜", "생년월일", "기산일", "입사", "퇴사"]
+        is_date_field = any(kw in str(column_name).lower() for kw in date_field_keywords)
+
+        # datetime 객체인 경우
         if isinstance(value, datetime):
-            return value.strftime('%Y%m%d')
+            # 대상 필드가 날짜 관련인 경우에만 포맷팅
+            if is_date_field:
+                return value.strftime('%Y%m%d')
+            return value # 날짜 필드가 아니면 원본 유지 (예: 기준급여에 datetime이 들어온 경우)
 
         str_value = str(value).strip()
 
         if fix_type == 'date_format':
+            # 대상 필드가 날짜 필드가 아니면 변환 스킵 (금액 필드에 날짜가 온 경우 등)
+            if not is_date_field:
+                return value
+
             # 1. 시리얼 번호(숫자)인 경우 처리 (예: 45292)
             try:
                 num_val = float(value)

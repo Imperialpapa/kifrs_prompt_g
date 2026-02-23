@@ -29,5 +29,12 @@ echo.
 echo Press Ctrl+C to stop the server.
 echo.
 
+REM 이전 좀비 프로세스가 포트 8000을 점유하고 있으면 강제 종료
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr :8000 ^| findstr LISTENING') do (
+    echo [CLEANUP] Killing stale process on port 8000 (PID: %%a)
+    taskkill /F /PID %%a >nul 2>&1
+)
+
 python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 pause
+\r

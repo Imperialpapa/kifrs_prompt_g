@@ -103,15 +103,29 @@ class ValidationRepository:
     async def get_session_errors(self, session_id: UUID) -> List[Dict]:
         """
         Retrieve all errors for a session
+        PostgREST 기본 1000건 제한을 우회하여 전체 오류를 페이지네이션으로 조회
         """
         try:
-            result = self.client.table('validation_errors') \
-                .select('*') \
-                .eq('session_id', str(session_id)) \
-                .order('row_number', desc=False) \
-                .execute()
-            
-            return result.data if result.data else []
+            all_errors = []
+            page_size = 1000
+            offset = 0
+
+            while True:
+                result = self.client.table('validation_errors') \
+                    .select('*') \
+                    .eq('session_id', str(session_id)) \
+                    .order('row_number', desc=False) \
+                    .range(offset, offset + page_size - 1) \
+                    .execute()
+
+                batch = result.data if result.data else []
+                all_errors.extend(batch)
+
+                if len(batch) < page_size:
+                    break
+                offset += page_size
+
+            return all_errors
         except Exception as e:
             print(f"[ValidationRepository] Error getting session errors: {str(e)}")
             return []

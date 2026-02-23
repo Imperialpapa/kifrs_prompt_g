@@ -40,6 +40,57 @@ def convert_numpy_types(obj):
         
     return obj
 
+def filter_garbage_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    유효하지 않은 행(Garbage Rows) 필터링.
+    사번/입사일이 모두 비어있는 행을 주석/메모로 간주하여 제거합니다.
+
+    Args:
+        df: 원본 DataFrame
+
+    Returns:
+        pd.DataFrame: 필터링된 DataFrame
+    """
+    id_keywords = ['사번', '사원번호', 'employee_id', 'emp_id', 'id', '코드', 'code']
+    date_keywords = ['입사일', '입사일자', 'hire_date', 'hire_dt']
+
+    df_cols_lower = {str(col).lower(): col for col in df.columns}
+
+    id_col = None
+    for kw in id_keywords:
+        for col_lower, original in df_cols_lower.items():
+            if kw in col_lower:
+                id_col = original
+                break
+        if id_col:
+            break
+
+    date_col = None
+    for kw in date_keywords:
+        for col_lower, original in df_cols_lower.items():
+            if kw in col_lower:
+                date_col = original
+                break
+        if date_col:
+            break
+
+    def is_row_empty(series):
+        return series.astype(str).str.strip().replace(['nan', 'None', 'NaT', ''], np.nan).isna()
+
+    if id_col and date_col:
+        mask = is_row_empty(df[id_col]) & is_row_empty(df[date_col])
+        df = df[~mask]
+    elif id_col or date_col:
+        target = id_col or date_col
+        mask = is_row_empty(df[target])
+        df = df[~mask]
+    else:
+        valid_counts = df.apply(lambda x: (~is_row_empty(x)).sum(), axis=1)
+        df = df[valid_counts >= 2]
+
+    return df
+
+
 def group_errors(errors: list) -> List[ValidationErrorGroup]:
     """
     동일한 인지 내용을 그룹화하여 집계

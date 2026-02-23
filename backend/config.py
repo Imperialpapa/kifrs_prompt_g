@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     # ==========================================================================
     # AI Configuration
     # ==========================================================================
-    AI_MODEL_VERSION: str = "claude-sonnet-4-20250514"
+    AI_MODEL_VERSION: str = "local-parser"
     ANTHROPIC_API_KEY: Optional[str] = None
 
     # ==========================================================================

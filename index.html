@@ -127,44 +127,6 @@
                         <p class="text-slate-500 mt-1">임직원 명부와 급여 데이터를 업로드하여 K-IFRS 기준에 따른 정합성을 검증합니다.</p>
                     </div>
 
-                    <!-- Rule Selection Card -->
-                    <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
-                        <div class="flex items-start gap-4 mb-6">
-                            <div class="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
-                                <i class="ph ph-gear-six text-2xl"></i>
-                            </div>
-                            <div class="flex-1">
-                                <h3 class="font-bold text-slate-900">검증 규칙 선택</h3>
-                                <p class="text-xs text-slate-500 mt-0.5">업로드된 파일에 적용할 검증 시나리오를 선택하세요.</p>
-                            </div>
-                        </div>
-
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <template x-for="rule in ruleFiles" :key="rule.id">
-                                <label class="relative flex items-center p-4 rounded-xl border-2 transition-all cursor-pointer group"
-                                       :class="selectedSavedRuleId === rule.id ? 'border-primary bg-primary/5' : 'border-slate-100 hover:border-slate-300'">
-                                    <input type="radio" name="ruleSelect" :value="rule.id" x-model="selectedSavedRuleId" class="hidden">
-                                    <div class="flex-1 flex items-center gap-3">
-                                        <div class="w-10 h-10 rounded-lg bg-white border flex items-center justify-center text-slate-400 group-hover:text-primary transition-colors shadow-sm"
-                                             :class="selectedSavedRuleId === rule.id ? 'text-primary border-primary/20' : 'border-slate-200'">
-                                            <i class="ph ph-file-spreadsheet text-2xl"></i>
-                                        </div>
-                                        <div>
-                                            <p class="text-sm font-bold text-slate-900" x-text="rule.file_name"></p>
-                                            <div class="flex items-center gap-2 mt-0.5">
-                                                <span class="text-[10px] font-semibold text-slate-500 uppercase" x-text="'v' + rule.file_version"></span>
-                                                <span class="text-[10px] px-1 bg-slate-100 text-slate-500 rounded" x-text="rule.total_rules_count + '개 규칙'"></span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div x-show="selectedSavedRuleId === rule.id" class="text-primary animate-in zoom-in duration-300">
-                                        <i class="ph-fill ph-check-circle text-2xl"></i>
-                                    </div>
-                                </label>
-                            </template>
-                        </div>
-                    </div>
-
                     <!-- Drag & Drop Zone -->
                     <div class="grid grid-cols-1 gap-6">
                         <div class="relative group">
@@ -196,9 +158,29 @@
                         </div>
                     </div>
 
+                    <!-- Selected Rule Indicator -->
+                    <div class="flex items-center justify-center">
+                        <template x-if="selectedSavedRuleId && ruleFiles.find(r => r.id === selectedSavedRuleId)">
+                            <div class="flex items-center gap-2 px-4 py-2 bg-primary/5 border border-primary/20 rounded-xl text-sm">
+                                <i class="ph-fill ph-check-circle text-primary"></i>
+                                <span class="text-slate-600">적용 규칙:</span>
+                                <span class="font-bold text-slate-900" x-text="ruleFiles.find(r => r.id === selectedSavedRuleId)?.file_name"></span>
+                                <span class="text-[10px] text-slate-400" x-text="'v' + ruleFiles.find(r => r.id === selectedSavedRuleId)?.file_version"></span>
+                                <button @click="currentTab = 'rules'" class="ml-1 text-primary hover:text-primary/70 text-xs font-bold underline underline-offset-2">변경</button>
+                            </div>
+                        </template>
+                        <template x-if="!selectedSavedRuleId || !ruleFiles.find(r => r.id === selectedSavedRuleId)">
+                            <div class="flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-200 rounded-xl text-sm">
+                                <i class="ph ph-warning text-amber-500"></i>
+                                <span class="text-slate-600">선택된 규칙이 없습니다.</span>
+                                <button @click="currentTab = 'rules'" class="ml-1 text-primary hover:text-primary/70 text-xs font-bold underline underline-offset-2">규칙 관리에서 선택</button>
+                            </div>
+                        </template>
+                    </div>
+
                     <!-- Action Buttons -->
                     <div class="flex justify-center pt-4">
-                        <button @click="validateFiles" 
+                        <button @click="validateFiles"
                                 :disabled="isLoading || !fileA || !selectedSavedRuleId"
                                 :class="(!fileA || !selectedSavedRuleId) ? 'opacity-50 grayscale' : 'hover:scale-105 hover:shadow-xl active:scale-95 shadow-primary/25'"
                                 class="bg-primary text-white px-12 py-4 rounded-2xl font-bold text-lg transition-all duration-300 flex items-center gap-3 group relative overflow-hidden">
@@ -241,6 +223,11 @@
                             <button @click="downloadExcel" class="bg-white hover:bg-slate-50 text-slate-700 px-5 py-2.5 rounded-xl text-sm font-bold border border-slate-200 transition-all flex items-center gap-2 shadow-sm">
                                 <i class="ph ph-file-arrow-down text-lg"></i>
                                 리포트 다운로드
+                            </button>
+                            <button @click="downloadHighlightedExcel()" :disabled="isDownloading"
+                                    class="bg-white hover:bg-slate-50 text-slate-700 px-5 py-2.5 rounded-xl text-sm font-bold border border-amber-200 transition-all flex items-center gap-2 shadow-sm disabled:opacity-50">
+                                <i class="ph ph-highlighter-circle text-lg text-amber-500"></i>
+                                하이라이트 Excel
                             </button>
                             <button @click="downloadFixedFile" 
                                     :disabled="isDownloading || selectedFixItems.length === 0"
@@ -329,12 +316,24 @@
                                             <i class="ph ph-magnifying-glass"></i>
                                             오류 분석
                                         </button>
-                                        <button @click="fixActiveTab = 'after'; generateFixPreview();" 
+                                        <button @click="fixActiveTab = 'after'; fixPreviewDisplayLimit = 200; generateFixPreview();"
                                                 :class="fixActiveTab === 'after' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:bg-slate-50'"
                                                 class="px-6 py-2.5 rounded-xl text-sm font-bold transition-all duration-300 flex items-center gap-2 group">
                                             <i class="ph ph-magic-wand transition-transform group-hover:rotate-12"></i>
                                             수정 미리보기
                                             <span class="bg-primary text-white text-[10px] px-1.5 py-0.5 rounded-full ml-1" x-text="selectedFixItems.length"></span>
+                                        </button>
+                                        <button @click="fixActiveTab = 'ai_analysis'"
+                                                :class="fixActiveTab === 'ai_analysis' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:bg-slate-50'"
+                                                class="px-6 py-2.5 rounded-xl text-sm font-bold transition-all duration-300 flex items-center gap-2">
+                                            <i class="ph ph-sparkle"></i>
+                                            AI 분석
+                                        </button>
+                                        <button @click="fixActiveTab = 'natural_query'"
+                                                :class="fixActiveTab === 'natural_query' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:bg-slate-50'"
+                                                class="px-6 py-2.5 rounded-xl text-sm font-bold transition-all duration-300 flex items-center gap-2">
+                                            <i class="ph ph-chat-circle-text"></i>
+                                            자연어 질의
                                         </button>
                                     </div>
 
@@ -510,288 +509,1042 @@
                                                     <p class="text-sm text-slate-400">표시할 교정 내역이 없습니다.</p>
                                                 </div>
                                             </template>
+
+                                            <!-- Truncation Notice + Load More -->
+                                            <template x-if="getFilteredPreviewTotal() > fixPreviewDisplayLimit">
+                                                <div class="flex items-center justify-between px-6 py-3 bg-slate-50 border-t border-slate-200">
+                                                    <p class="text-xs text-slate-500">
+                                                        전체 <span class="font-bold text-slate-700" x-text="getFilteredPreviewTotal().toLocaleString()"></span>건 중
+                                                        <span class="font-bold text-primary" x-text="Math.min(fixPreviewDisplayLimit, getFilteredPreviewTotal()).toLocaleString()"></span>건 표시
+                                                        <span class="text-slate-400 ml-1">(파일 다운로드 시 전체 적용)</span>
+                                                    </p>
+                                                    <button @click="fixPreviewDisplayLimit += 200"
+                                                            class="text-xs font-bold text-primary hover:bg-primary/5 px-3 py-1.5 rounded-lg transition-colors border border-primary/20">
+                                                        200건 더 보기
+                                                    </button>
+                                                </div>
+                                            </template>
                                         </div>
                                     </div>
+
+                                    <!-- TAB 3: AI 스마트 분석 -->
+                                    <div x-show="fixActiveTab === 'ai_analysis'" class="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
+
+                                        <!-- 파일 상태 표시 -->
+                                        <div class="flex items-center gap-3 bg-violet-50 border border-violet-200 rounded-xl px-4 py-3">
+                                            <i class="ph ph-file-arrow-up text-violet-500"></i>
+                                            <span class="text-sm font-medium text-violet-700">분석 대상 파일:</span>
+                                            <span x-show="fileA" class="text-sm text-violet-600 bg-white px-3 py-0.5 rounded-full border border-violet-200" x-text="fileA?.name"></span>
+                                            <span x-show="!fileA" class="text-sm text-violet-400">파일 업로드 탭에서 먼저 파일을 선택해주세요.</span>
+                                        </div>
+
+                                        <!-- 분석 버튼 그리드 -->
+                                        <div class="space-y-3">
+                                            <div class="flex gap-3">
+                                                <button @click="runCrossFieldAnalysis()" :disabled="smartAnalysisLoading || !fileA"
+                                                        class="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700 shadow-lg shadow-violet-500/20 transition-all disabled:opacity-50">
+                                                    <i class="ph ph-git-diff text-lg"></i>
+                                                    <span x-text="smartAnalysisLoading && smartAnalysisTab === 'cross_field' ? '분석 중...' : '크로스필드 모순 탐지'"></span>
+                                                </button>
+                                                <button @click="runDataProfile()" :disabled="smartAnalysisLoading || !fileA"
+                                                        class="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 shadow-lg shadow-cyan-500/20 transition-all disabled:opacity-50">
+                                                    <i class="ph ph-heartbeat text-lg"></i>
+                                                    <span x-text="smartAnalysisLoading && smartAnalysisTab === 'data_profile' ? '분석 중...' : '데이터 프로파일링'"></span>
+                                                </button>
+                                            </div>
+                                            <div class="flex gap-3">
+                                                <button @click="runCompletenessScore()" :disabled="completenessLoading || !fileA"
+                                                        class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium border border-slate-200 hover:bg-slate-50 transition-all disabled:opacity-50">
+                                                    <i class="ph ph-chart-pie text-lg text-emerald-500"></i>
+                                                    <span x-text="completenessLoading ? '분석 중...' : '데이터 완전성 점수'"></span>
+                                                </button>
+                                                <button @click="runRuleConflictCheck()" :disabled="ruleConflictLoading || !selectedSavedRuleId"
+                                                        class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium border border-slate-200 hover:bg-slate-50 transition-all disabled:opacity-50">
+                                                    <i class="ph ph-warning-diamond text-lg text-amber-500"></i>
+                                                    <span x-text="ruleConflictLoading ? '검사 중...' : '규칙 충돌 검사'"></span>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Loading Spinner -->
+                                        <template x-if="smartAnalysisLoading">
+                                            <div class="bg-white p-12 rounded-2xl border border-slate-200 shadow-sm text-center">
+                                                <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-violet-50 mb-4">
+                                                    <i class="ph ph-circle-notch text-3xl text-violet-500 animate-spin"></i>
+                                                </div>
+                                                <p class="text-slate-600 font-medium">AI가 데이터를 분석하고 있습니다...</p>
+                                                <p class="text-sm text-slate-400 mt-1">데이터 크기에 따라 시간이 소요될 수 있습니다</p>
+                                            </div>
+                                        </template>
+
+                                        <!-- Sub Tabs (결과가 하나라도 있을 때) -->
+                                        <template x-if="!smartAnalysisLoading && (crossFieldResults || dataProfileResults)">
+                                            <div>
+                                                <div class="flex gap-1 bg-slate-100 p-1 rounded-xl w-fit">
+                                                    <button @click="smartAnalysisTab = 'cross_field'"
+                                                            :class="smartAnalysisTab === 'cross_field' ? 'bg-white shadow text-violet-700' : 'text-slate-500 hover:text-slate-700'"
+                                                            class="px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-2">
+                                                        <i class="ph ph-git-diff"></i>
+                                                        크로스필드 모순
+                                                        <template x-if="crossFieldResults">
+                                                            <span class="text-xs px-1.5 py-0.5 rounded-full"
+                                                                  :class="crossFieldResults.total_issues > 0 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'"
+                                                                  x-text="crossFieldResults.total_issues + '건'"></span>
+                                                        </template>
+                                                    </button>
+                                                    <button @click="smartAnalysisTab = 'data_profile'"
+                                                            :class="smartAnalysisTab === 'data_profile' ? 'bg-white shadow text-cyan-700' : 'text-slate-500 hover:text-slate-700'"
+                                                            class="px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-2">
+                                                        <i class="ph ph-heartbeat"></i>
+                                                        데이터 프로파일링
+                                                        <template x-if="dataProfileResults">
+                                                            <span class="text-xs px-1.5 py-0.5 rounded-full"
+                                                                  :class="dataProfileResults.health_score >= 80 ? 'bg-green-100 text-green-700' : dataProfileResults.health_score >= 60 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'"
+                                                                  x-text="dataProfileResults.health_score + '점'"></span>
+                                                        </template>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </template>
+
+                                        <!-- Cross-Field Results -->
+                                        <template x-if="!smartAnalysisLoading && smartAnalysisTab === 'cross_field' && crossFieldResults">
+                                            <div class="space-y-4">
+                                                <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                                                    <div class="flex items-center justify-between">
+                                                        <div class="flex items-center gap-3">
+                                                            <div class="w-10 h-10 rounded-xl flex items-center justify-center"
+                                                                 :class="crossFieldResults.total_issues > 0 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'">
+                                                                <i class="ph-fill text-xl" :class="crossFieldResults.total_issues > 0 ? 'ph-warning' : 'ph-check-circle'"></i>
+                                                            </div>
+                                                            <div>
+                                                                <p class="font-bold text-slate-900" x-text="'논리 모순 ' + crossFieldResults.total_issues + '건 발견'"></p>
+                                                                <p class="text-sm text-slate-500" x-text="crossFieldResults.analysis_summary"></p>
+                                                            </div>
+                                                        </div>
+                                                        <template x-if="crossFieldResults.total_issues > 0">
+                                                            <select x-model="crossFieldSeverityFilter" class="text-xs border border-slate-200 rounded-lg px-3 py-1.5 bg-white">
+                                                                <option value="all">전체</option>
+                                                                <option value="high">심각</option>
+                                                                <option value="medium">주의</option>
+                                                                <option value="low">참고</option>
+                                                            </select>
+                                                        </template>
+                                                    </div>
+                                                </div>
+                                                <template x-for="(item, idx) in getFilteredCrossFieldResults()" :key="idx">
+                                                    <div class="bg-white rounded-2xl border shadow-sm overflow-hidden" :class="getSeverityColor(item.severity)">
+                                                        <div class="p-5">
+                                                            <div class="flex items-start justify-between mb-3">
+                                                                <div class="flex items-center gap-2">
+                                                                    <span class="text-xs font-bold px-2 py-0.5 rounded-full" :class="getSeverityBadge(item.severity)" x-text="getSeverityLabel(item.severity)"></span>
+                                                                    <span class="text-xs text-slate-400" x-text="item.sheet"></span>
+                                                                </div>
+                                                                <span class="text-xs text-slate-400" x-text="'Row ' + (item.rows || []).join(', ')"></span>
+                                                            </div>
+                                                            <p class="text-sm font-semibold text-slate-900 mb-2" x-text="item.description"></p>
+                                                            <div class="flex flex-wrap gap-1.5 mb-3">
+                                                                <template x-for="field in (item.fields || [])" :key="field">
+                                                                    <span class="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md font-medium" x-text="field"></span>
+                                                                </template>
+                                                            </div>
+                                                            <div class="flex items-center gap-2 text-xs text-slate-500">
+                                                                <i class="ph ph-lightbulb text-amber-500"></i>
+                                                                <span x-text="item.suggestion"></span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </template>
+                                                <template x-if="getFilteredCrossFieldResults().length === 0 && crossFieldResults.total_issues === 0">
+                                                    <div class="bg-white p-12 rounded-2xl border border-green-200 text-center">
+                                                        <div class="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-4">
+                                                            <i class="ph-fill ph-check-circle text-3xl text-green-500"></i>
+                                                        </div>
+                                                        <p class="font-bold text-green-700">논리 모순이 발견되지 않았습니다</p>
+                                                        <p class="text-sm text-slate-500 mt-1">필드 간 데이터 관계가 일관성 있습니다.</p>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                        </template>
+
+                                        <!-- Data Profile Results -->
+                                        <template x-if="!smartAnalysisLoading && smartAnalysisTab === 'data_profile' && dataProfileResults">
+                                            <div class="space-y-4">
+                                                <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                                                    <div class="flex items-center gap-6">
+                                                        <div class="relative w-24 h-24 flex-shrink-0">
+                                                            <svg class="w-24 h-24 -rotate-90" viewBox="0 0 100 100">
+                                                                <circle cx="50" cy="50" r="42" fill="none" stroke="#e2e8f0" stroke-width="8"/>
+                                                                <circle cx="50" cy="50" r="42" fill="none" stroke-width="8" stroke-linecap="round"
+                                                                        :stroke="dataProfileResults.health_score >= 80 ? '#22c55e' : dataProfileResults.health_score >= 60 ? '#f59e0b' : '#ef4444'"
+                                                                        :stroke-dasharray="(dataProfileResults.health_score / 100 * 264) + ' 264'"/>
+                                                            </svg>
+                                                            <div class="absolute inset-0 flex items-center justify-center">
+                                                                <span class="text-2xl font-black" :class="getHealthScoreColor(dataProfileResults.health_score)" x-text="dataProfileResults.health_score"></span>
+                                                            </div>
+                                                        </div>
+                                                        <div class="flex-1">
+                                                            <p class="font-bold text-slate-900 text-lg">데이터 건강 점수</p>
+                                                            <p class="text-sm text-slate-500 mt-1" x-text="dataProfileResults.summary"></p>
+                                                            <div class="mt-3 space-y-2">
+                                                                <template x-for="(score, category) in (dataProfileResults.category_scores || {})" :key="category">
+                                                                    <div class="flex items-center gap-3">
+                                                                        <span class="text-xs text-slate-500 w-24 text-right" x-text="category"></span>
+                                                                        <div class="flex-1 bg-slate-100 rounded-full h-2">
+                                                                            <div class="h-2 rounded-full transition-all duration-500"
+                                                                                 :class="score >= 80 ? 'bg-green-500' : score >= 60 ? 'bg-amber-500' : 'bg-red-500'"
+                                                                                 :style="'width: ' + score + '%'"></div>
+                                                                        </div>
+                                                                        <span class="text-xs font-bold w-8" :class="score >= 80 ? 'text-green-600' : score >= 60 ? 'text-amber-600' : 'text-red-600'" x-text="score"></span>
+                                                                    </div>
+                                                                </template>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <template x-if="dataProfileResults.findings && dataProfileResults.findings.length > 0">
+                                                    <div class="flex items-center justify-between">
+                                                        <p class="text-sm font-semibold text-slate-700">
+                                                            발견된 이슈 <span class="text-violet-600" x-text="getFilteredProfileFindings().length + '건'"></span>
+                                                        </p>
+                                                        <select x-model="profileCategoryFilter" class="text-xs border border-slate-200 rounded-lg px-3 py-1.5 bg-white">
+                                                            <option value="all">전체 카테고리</option>
+                                                            <template x-for="cat in getProfileCategories()" :key="cat.value">
+                                                                <option :value="cat.value" x-text="cat.label"></option>
+                                                            </template>
+                                                        </select>
+                                                    </div>
+                                                </template>
+                                                <template x-for="(finding, idx) in getFilteredProfileFindings()" :key="idx">
+                                                    <div class="bg-white rounded-2xl border shadow-sm overflow-hidden" :class="getSeverityColor(finding.severity)">
+                                                        <div class="p-5">
+                                                            <div class="flex items-start justify-between mb-3">
+                                                                <div class="flex items-center gap-2">
+                                                                    <span class="text-xs font-bold px-2 py-0.5 rounded-full" :class="getSeverityBadge(finding.severity)" x-text="getSeverityLabel(finding.severity)"></span>
+                                                                    <span class="text-xs text-slate-400" x-text="finding.sheet"></span>
+                                                                    <span class="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md" x-text="finding.column"></span>
+                                                                </div>
+                                                                <template x-if="finding.affected_count > 0">
+                                                                    <span class="text-xs text-slate-400" x-text="finding.affected_count + '건 영향'"></span>
+                                                                </template>
+                                                            </div>
+                                                            <p class="text-sm font-semibold text-slate-900 mb-2" x-text="finding.description"></p>
+                                                            <template x-if="finding.examples && finding.examples.length > 0">
+                                                                <div class="flex flex-wrap gap-1.5">
+                                                                    <template x-for="ex in finding.examples.slice(0, 5)" :key="ex">
+                                                                        <span class="text-xs bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded-md font-mono" x-text="ex"></span>
+                                                                    </template>
+                                                                </div>
+                                                            </template>
+                                                        </div>
+                                                    </div>
+                                                </template>
+                                                <template x-if="dataProfileResults.findings && dataProfileResults.findings.length === 0">
+                                                    <div class="bg-white p-12 rounded-2xl border border-green-200 text-center">
+                                                        <div class="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-4">
+                                                            <i class="ph-fill ph-heart text-3xl text-green-500"></i>
+                                                        </div>
+                                                        <p class="font-bold text-green-700">데이터 상태가 양호합니다</p>
+                                                        <p class="text-sm text-slate-500 mt-1">특별한 이상 소견이 발견되지 않았습니다.</p>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                        </template>
+
+                                        <!-- Initial Empty State -->
+                                        <template x-if="!smartAnalysisLoading && !crossFieldResults && !dataProfileResults && !completenessResults && !ruleConflictResults">
+                                            <div class="bg-white p-12 rounded-2xl border border-slate-200 shadow-sm text-center">
+                                                <div class="w-20 h-20 rounded-full bg-gradient-to-br from-violet-50 to-purple-50 flex items-center justify-center mx-auto mb-5">
+                                                    <i class="ph ph-sparkle text-4xl text-violet-400"></i>
+                                                </div>
+                                                <p class="font-bold text-slate-700 text-lg">AI 스마트 분석</p>
+                                                <p class="text-sm text-slate-500 mt-2 max-w-md mx-auto">
+                                                    규칙 파일 없이도 AI가 데이터의 논리적 모순, 이상치, 형식 불일치 등을 자동으로 탐지합니다.
+                                                    위 분석 버튼을 클릭하여 시작하세요.
+                                                </p>
+                                                <div class="flex justify-center gap-6 mt-6 text-xs text-slate-400">
+                                                    <span class="flex items-center gap-1"><i class="ph ph-git-diff text-violet-400"></i> 크로스필드 모순 탐지</span>
+                                                    <span class="flex items-center gap-1"><i class="ph ph-heartbeat text-cyan-400"></i> 데이터 건강 진단</span>
+                                                </div>
+                                            </div>
+                                        </template>
+
+                                        <!-- Completeness Score Results -->
+                                        <template x-if="completenessResults">
+                                            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+                                                <div class="flex items-center justify-between">
+                                                    <h3 class="font-semibold text-slate-800 flex items-center gap-2">
+                                                        <i class="ph ph-chart-pie text-emerald-500"></i>
+                                                        데이터 완전성 점수
+                                                    </h3>
+                                                    <span class="text-2xl font-bold" :class="completenessResults.overall_score >= 90 ? 'text-green-600' : completenessResults.overall_score >= 70 ? 'text-amber-600' : 'text-red-600'"
+                                                          x-text="`${completenessResults.overall_score}%`"></span>
+                                                </div>
+                                                <div class="w-full bg-slate-200 rounded-full h-3">
+                                                    <div class="h-3 rounded-full transition-all duration-1000"
+                                                         :class="completenessResults.overall_score >= 90 ? 'bg-green-500' : completenessResults.overall_score >= 70 ? 'bg-amber-500' : 'bg-red-500'"
+                                                         :style="`width: ${completenessResults.overall_score}%`"></div>
+                                                </div>
+                                                <div class="grid grid-cols-3 gap-3 text-center text-sm">
+                                                    <div class="bg-slate-50 rounded-xl p-3">
+                                                        <div class="font-bold text-slate-800" x-text="completenessResults.total_cells?.toLocaleString()"></div>
+                                                        <div class="text-xs text-slate-500">전체 셀</div>
+                                                    </div>
+                                                    <div class="bg-green-50 rounded-xl p-3">
+                                                        <div class="font-bold text-green-600" x-text="completenessResults.filled_cells?.toLocaleString()"></div>
+                                                        <div class="text-xs text-green-700">채워진 셀</div>
+                                                    </div>
+                                                    <div class="bg-red-50 rounded-xl p-3">
+                                                        <div class="font-bold text-red-600" x-text="completenessResults.empty_cells?.toLocaleString()"></div>
+                                                        <div class="text-xs text-red-700">빈 셀</div>
+                                                    </div>
+                                                </div>
+                                                <template x-if="completenessResults.worst_fields?.length > 0">
+                                                    <div>
+                                                        <h4 class="text-sm font-medium text-slate-700 mb-2">완전성 최저 필드 (채움률 낮은 순)</h4>
+                                                        <div class="space-y-1">
+                                                            <template x-for="(wf, idx) in completenessResults.worst_fields" :key="idx">
+                                                                <div class="flex items-center gap-3 text-sm">
+                                                                    <span class="text-slate-600 w-32 truncate" x-text="wf.field"></span>
+                                                                    <div class="flex-1 bg-slate-100 rounded-full h-2">
+                                                                        <div class="h-2 rounded-full" :class="wf.score >= 80 ? 'bg-green-400' : wf.score >= 50 ? 'bg-amber-400' : 'bg-red-400'"
+                                                                             :style="`width: ${wf.score}%`"></div>
+                                                                    </div>
+                                                                    <span class="text-xs text-slate-500 w-12 text-right" x-text="`${wf.score}%`"></span>
+                                                                </div>
+                                                            </template>
+                                                        </div>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                        </template>
+
+                                        <!-- Rule Conflict Results -->
+                                        <template x-if="ruleConflictResults">
+                                            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+                                                <div class="flex items-center justify-between">
+                                                    <h3 class="font-semibold text-slate-800 flex items-center gap-2">
+                                                        <i class="ph ph-warning-diamond text-amber-500"></i>
+                                                        규칙 충돌 검사 결과
+                                                    </h3>
+                                                    <span class="text-sm px-3 py-1 rounded-full"
+                                                          :class="ruleConflictResults.total_conflicts > 0 ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'"
+                                                          x-text="ruleConflictResults.total_conflicts > 0 ? `${ruleConflictResults.total_conflicts}건 충돌` : '충돌 없음'"></span>
+                                                </div>
+                                                <p class="text-sm text-slate-500" x-text="ruleConflictResults.summary"></p>
+                                                <template x-if="ruleConflictResults.conflicts?.length > 0">
+                                                    <div class="space-y-3">
+                                                        <template x-for="(conflict, idx) in ruleConflictResults.conflicts" :key="idx">
+                                                            <div class="rounded-xl border p-4"
+                                                                 :class="conflict.severity === 'high' ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'">
+                                                                <div class="flex items-center gap-2 mb-2">
+                                                                    <span class="px-2 py-0.5 rounded text-xs font-medium"
+                                                                          :class="conflict.severity === 'high' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'"
+                                                                          x-text="conflict.severity === 'high' ? '심각' : '주의'"></span>
+                                                                    <span class="text-sm font-medium text-slate-800" x-text="conflict.field"></span>
+                                                                </div>
+                                                                <p class="text-sm text-slate-700" x-text="conflict.description"></p>
+                                                                <div class="mt-2 text-xs text-slate-500 space-y-1">
+                                                                    <p x-text="`규칙1: ${conflict.rule1_text}`"></p>
+                                                                    <p x-text="`규칙2: ${conflict.rule2_text}`"></p>
+                                                                </div>
+                                                            </div>
+                                                        </template>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                        </template>
+                                    </div>
+
+                                    <!-- TAB 4: 자연어 질의 -->
+                                    <div x-show="fixActiveTab === 'natural_query'" class="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
+
+                                        <!-- 파일 상태 + 질의 입력 -->
+                                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                                            <div class="flex items-center gap-3 mb-4">
+                                                <i class="ph ph-chat-circle-text text-xl text-indigo-500"></i>
+                                                <span class="font-semibold text-slate-800">자연어 질의</span>
+                                                <span x-show="fileA" class="text-sm text-green-600 bg-green-50 px-2 py-0.5 rounded-full" x-text="fileA?.name"></span>
+                                                <span x-show="!fileA" class="text-sm text-slate-400">파일 업로드 탭에서 먼저 파일을 선택해주세요.</span>
+                                            </div>
+
+                                            <div class="flex gap-3">
+                                                <input type="text" x-model="naturalQueryText"
+                                                       @keydown.enter="runNaturalQuery()"
+                                                       class="flex-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
+                                                       placeholder="예: 퇴직일이 2025년인 직원 중 급여가 5000만원 이상인 사람은?">
+                                                <button @click="runNaturalQuery()"
+                                                        :disabled="naturalQueryLoading || !naturalQueryText.trim() || !fileA"
+                                                        class="px-6 py-3 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 font-medium text-sm whitespace-nowrap">
+                                                    <span x-show="!naturalQueryLoading">질의 실행</span>
+                                                    <span x-show="naturalQueryLoading" class="flex items-center gap-2">
+                                                        <i class="ph ph-spinner animate-spin"></i> 분석중...
+                                                    </span>
+                                                </button>
+                                            </div>
+
+                                            <div class="mt-3 flex flex-wrap gap-2">
+                                                <span class="text-xs text-slate-400">예시:</span>
+                                                <button @click="naturalQueryText = '퇴직자 목록'" class="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-lg hover:bg-slate-200">퇴직자 목록</button>
+                                                <button @click="naturalQueryText = '입사일이 2020년 이후인 직원'" class="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-lg hover:bg-slate-200">2020년 이후 입사</button>
+                                                <button @click="naturalQueryText = '성별이 비어있는 직원'" class="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-lg hover:bg-slate-200">성별 누락</button>
+                                            </div>
+                                        </div>
+
+                                        <!-- 결과 -->
+                                        <template x-if="naturalQueryResults">
+                                            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+                                                <div class="flex items-center justify-between">
+                                                    <h3 class="font-semibold text-slate-800">질의 결과</h3>
+                                                    <span class="text-sm bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full" x-text="`${naturalQueryResults.total_matches}건 매칭`"></span>
+                                                </div>
+                                                <div class="text-sm text-slate-600 bg-slate-50 rounded-xl p-3">
+                                                    <span class="font-medium">AI 해석:</span> <span x-text="naturalQueryResults.query_interpretation"></span>
+                                                </div>
+                                                <template x-if="naturalQueryResults.matched_rows?.length > 0">
+                                                    <div class="overflow-x-auto max-h-96 border border-slate-200 rounded-xl">
+                                                        <table class="w-full text-xs">
+                                                            <thead class="bg-slate-50 sticky top-0">
+                                                                <tr>
+                                                                    <template x-for="col in Object.keys(naturalQueryResults.matched_rows[0]).filter(k => !k.startsWith('__'))">
+                                                                        <th class="px-3 py-2 text-left font-medium text-slate-600 border-b" x-text="col"></th>
+                                                                    </template>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                <template x-for="(row, idx) in naturalQueryResults.matched_rows" :key="idx">
+                                                                    <tr class="border-b border-slate-100 hover:bg-slate-50">
+                                                                        <template x-for="col in Object.keys(naturalQueryResults.matched_rows[0]).filter(k => !k.startsWith('__'))">
+                                                                            <td class="px-3 py-2 text-slate-700" x-text="row[col] || ''"></td>
+                                                                        </template>
+                                                                    </tr>
+                                                                </template>
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                </template>
+                                                <template x-if="!naturalQueryResults.matched_rows?.length">
+                                                    <div class="text-center py-8 text-slate-400">
+                                                        <i class="ph ph-magnifying-glass text-3xl mb-2"></i>
+                                                        <p>조건에 맞는 데이터를 찾지 못했습니다.</p>
+                                                    </div>
+                                                </template>
+                                                <p class="text-sm text-slate-500" x-text="naturalQueryResults.summary"></p>
+                                            </div>
+                                        </template>
+                                    </div>
+
                                 </div>
                             </div>
                         </div>
                     </template>
                 </div>
 
-                <!-- 3. AI SMART ANALYSIS VIEW -->
-                <div x-show="currentTab === 'ai_fix'" class="max-w-6xl mx-auto space-y-6 animate-in fade-in duration-500">
-
-                    <!-- Header -->
-                    <div class="flex items-center justify-between">
-                        <div class="flex items-center gap-4">
-                            <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-violet-500 to-purple-600 text-white flex items-center justify-center shadow-lg shadow-violet-500/20">
-                                <i class="ph-fill ph-magic-wand text-3xl"></i>
-                            </div>
-                            <div>
-                                <h2 class="text-2xl font-bold text-slate-900 tracking-tight">AI 스마트 분석</h2>
-                                <p class="text-slate-500 mt-1">AI가 데이터의 숨겨진 문제를 자동으로 탐지합니다.</p>
-                            </div>
-                        </div>
+                <!-- K-IFRS COMPLIANCE VIEW -->
+                <div x-show="currentTab === 'compliance'" class="max-w-6xl mx-auto space-y-6 animate-in fade-in duration-500">
+                    <div>
+                        <h2 class="text-2xl font-bold text-slate-900">K-IFRS 1019 컴플라이언스 어드바이저</h2>
+                        <p class="text-slate-500 mt-1">DBO 계산 필수 항목 누락 탐지 및 계리적 가정의 합리성을 검토합니다.</p>
                     </div>
 
-                    <!-- File Upload Area -->
-                    <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
                         <div class="flex items-center justify-between mb-4">
-                            <h3 class="font-semibold text-slate-800 flex items-center gap-2">
-                                <i class="ph ph-file-arrow-up text-violet-500"></i>
-                                분석 대상 파일
-                            </h3>
-                            <template x-if="getSmartAnalysisFile()">
-                                <span class="text-xs font-medium text-violet-600 bg-violet-50 px-3 py-1 rounded-full" x-text="getSmartAnalysisFile()?.name"></span>
-                            </template>
+                            <div class="flex items-center gap-3">
+                                <i class="ph ph-shield-check text-xl text-emerald-500"></i>
+                                <span class="font-semibold text-slate-800">컴플라이언스 검사</span>
+                                <span x-show="smartAnalysisFileA || fileA" class="text-sm text-green-600 bg-green-50 px-2 py-0.5 rounded-full" x-text="(smartAnalysisFileA || fileA)?.name"></span>
+                            </div>
+                            <button @click="runComplianceCheck()"
+                                    :disabled="complianceLoading"
+                                    class="px-5 py-2.5 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 disabled:opacity-50 font-medium text-sm">
+                                <span x-show="!complianceLoading">검사 실행</span>
+                                <span x-show="complianceLoading" class="flex items-center gap-2">
+                                    <i class="ph ph-spinner animate-spin"></i> 분석중...
+                                </span>
+                            </button>
                         </div>
-
-                        <template x-if="!getSmartAnalysisFile()">
-                            <div class="border-2 border-dashed border-slate-200 rounded-xl p-8 text-center hover:border-violet-400 transition-colors cursor-pointer"
-                                 @click="$refs.smartFileInput.click()"
-                                 @dragover.prevent="true"
-                                 @drop.prevent="handleSmartAnalysisFileDrop($event)">
-                                <i class="ph ph-cloud-arrow-up text-4xl text-slate-300 mb-3"></i>
-                                <p class="text-sm text-slate-500">Excel 파일을 드래그하거나 클릭하여 선택하세요</p>
-                                <p class="text-xs text-slate-400 mt-1">검증 탭에서 이미 파일을 업로드했다면 자동으로 사용됩니다</p>
-                                <input type="file" x-ref="smartFileInput" class="hidden" accept=".xlsx,.xls" @change="handleSmartAnalysisFileSelect($event)">
-                            </div>
-                        </template>
-
-                        <template x-if="getSmartAnalysisFile()">
-                            <div class="flex gap-3">
-                                <button @click="runCrossFieldAnalysis()" :disabled="smartAnalysisLoading"
-                                        class="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700 shadow-lg shadow-violet-500/20 transition-all disabled:opacity-50">
-                                    <i class="ph ph-git-diff text-lg"></i>
-                                    <span x-text="smartAnalysisLoading && smartAnalysisTab === 'cross_field' ? '분석 중...' : '크로스필드 모순 탐지'"></span>
-                                </button>
-                                <button @click="runDataProfile()" :disabled="smartAnalysisLoading"
-                                        class="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 shadow-lg shadow-cyan-500/20 transition-all disabled:opacity-50">
-                                    <i class="ph ph-heartbeat text-lg"></i>
-                                    <span x-text="smartAnalysisLoading && smartAnalysisTab === 'data_profile' ? '분석 중...' : '데이터 프로파일링'"></span>
-                                </button>
-                            </div>
-                        </template>
                     </div>
 
-                    <!-- Loading Spinner -->
-                    <template x-if="smartAnalysisLoading">
-                        <div class="bg-white p-12 rounded-2xl border border-slate-200 shadow-sm text-center">
-                            <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-violet-50 mb-4">
-                                <i class="ph ph-circle-notch text-3xl text-violet-500 animate-spin"></i>
-                            </div>
-                            <p class="text-slate-600 font-medium">AI가 데이터를 분석하고 있습니다...</p>
-                            <p class="text-sm text-slate-400 mt-1">데이터 크기에 따라 시간이 소요될 수 있습니다</p>
-                        </div>
-                    </template>
-
-                    <!-- Sub Tabs (결과가 하나라도 있을 때) -->
-                    <template x-if="!smartAnalysisLoading && (crossFieldResults || dataProfileResults)">
-                        <div>
-                            <div class="flex gap-1 bg-slate-100 p-1 rounded-xl w-fit">
-                                <button @click="smartAnalysisTab = 'cross_field'"
-                                        :class="smartAnalysisTab === 'cross_field' ? 'bg-white shadow text-violet-700' : 'text-slate-500 hover:text-slate-700'"
-                                        class="px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-2">
-                                    <i class="ph ph-git-diff"></i>
-                                    크로스필드 모순
-                                    <template x-if="crossFieldResults">
-                                        <span class="text-xs px-1.5 py-0.5 rounded-full"
-                                              :class="crossFieldResults.total_issues > 0 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'"
-                                              x-text="crossFieldResults.total_issues + '건'"></span>
-                                    </template>
-                                </button>
-                                <button @click="smartAnalysisTab = 'data_profile'"
-                                        :class="smartAnalysisTab === 'data_profile' ? 'bg-white shadow text-cyan-700' : 'text-slate-500 hover:text-slate-700'"
-                                        class="px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-2">
-                                    <i class="ph ph-heartbeat"></i>
-                                    데이터 프로파일링
-                                    <template x-if="dataProfileResults">
-                                        <span class="text-xs px-1.5 py-0.5 rounded-full"
-                                              :class="dataProfileResults.health_score >= 80 ? 'bg-green-100 text-green-700' : dataProfileResults.health_score >= 60 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'"
-                                              x-text="dataProfileResults.health_score + '점'"></span>
-                                    </template>
-                                </button>
-                            </div>
-                        </div>
-                    </template>
-
-                    <!-- ==================== Cross-Field Results ==================== -->
-                    <template x-if="!smartAnalysisLoading && smartAnalysisTab === 'cross_field' && crossFieldResults">
-                        <div class="space-y-4">
-                            <!-- Summary Card -->
-                            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                                <div class="flex items-center justify-between">
-                                    <div class="flex items-center gap-3">
-                                        <div class="w-10 h-10 rounded-xl flex items-center justify-center"
-                                             :class="crossFieldResults.total_issues > 0 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'">
-                                            <i class="ph-fill text-xl" :class="crossFieldResults.total_issues > 0 ? 'ph-warning' : 'ph-check-circle'"></i>
-                                        </div>
-                                        <div>
-                                            <p class="font-bold text-slate-900" x-text="'논리 모순 ' + crossFieldResults.total_issues + '건 발견'"></p>
-                                            <p class="text-sm text-slate-500" x-text="crossFieldResults.analysis_summary"></p>
-                                        </div>
-                                    </div>
-
-                                    <!-- Severity Filter -->
-                                    <template x-if="crossFieldResults.total_issues > 0">
-                                        <select x-model="crossFieldSeverityFilter" class="text-xs border border-slate-200 rounded-lg px-3 py-1.5 bg-white">
-                                            <option value="all">전체</option>
-                                            <option value="high">심각</option>
-                                            <option value="medium">주의</option>
-                                            <option value="low">참고</option>
-                                        </select>
-                                    </template>
+                    <!-- 결과 -->
+                    <template x-if="complianceResults">
+                        <div class="space-y-6">
+                            <!-- 점수 카드 -->
+                            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                <div class="bg-white rounded-xl border border-slate-200 p-5 text-center">
+                                    <div class="text-3xl font-bold" :class="getComplianceScoreColor(complianceResults.overall_score)" x-text="`${complianceResults.overall_score}%`"></div>
+                                    <div class="text-sm text-slate-500 mt-1">전체 준수율</div>
+                                </div>
+                                <div class="bg-green-50 rounded-xl border border-green-200 p-5 text-center">
+                                    <div class="text-2xl font-bold text-green-600" x-text="complianceResults.met_count"></div>
+                                    <div class="text-sm text-green-700">충족</div>
+                                </div>
+                                <div class="bg-amber-50 rounded-xl border border-amber-200 p-5 text-center">
+                                    <div class="text-2xl font-bold text-amber-600" x-text="complianceResults.caution_count"></div>
+                                    <div class="text-sm text-amber-700">주의</div>
+                                </div>
+                                <div class="bg-red-50 rounded-xl border border-red-200 p-5 text-center">
+                                    <div class="text-2xl font-bold text-red-600" x-text="complianceResults.not_met_count"></div>
+                                    <div class="text-sm text-red-700">미충족</div>
                                 </div>
                             </div>
 
-                            <!-- Contradiction Cards -->
-                            <template x-for="(item, idx) in getFilteredCrossFieldResults()" :key="idx">
-                                <div class="bg-white rounded-2xl border shadow-sm overflow-hidden" :class="getSeverityColor(item.severity)">
-                                    <div class="p-5">
-                                        <div class="flex items-start justify-between mb-3">
-                                            <div class="flex items-center gap-2">
-                                                <span class="text-xs font-bold px-2 py-0.5 rounded-full" :class="getSeverityBadge(item.severity)" x-text="getSeverityLabel(item.severity)"></span>
-                                                <span class="text-xs text-slate-400" x-text="item.sheet"></span>
+                            <!-- 필터 -->
+                            <div class="flex gap-2">
+                                <button @click="complianceFilter = 'all'" class="px-3 py-1.5 rounded-lg text-sm" :class="complianceFilter === 'all' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'">전체</button>
+                                <button @click="complianceFilter = 'met'" class="px-3 py-1.5 rounded-lg text-sm" :class="complianceFilter === 'met' ? 'bg-green-600 text-white' : 'bg-green-50 text-green-700 hover:bg-green-100'">충족</button>
+                                <button @click="complianceFilter = 'caution'" class="px-3 py-1.5 rounded-lg text-sm" :class="complianceFilter === 'caution' ? 'bg-amber-600 text-white' : 'bg-amber-50 text-amber-700 hover:bg-amber-100'">주의</button>
+                                <button @click="complianceFilter = 'not_met'" class="px-3 py-1.5 rounded-lg text-sm" :class="complianceFilter === 'not_met' ? 'bg-red-600 text-white' : 'bg-red-50 text-red-700 hover:bg-red-100'">미충족</button>
+                            </div>
+
+                            <!-- 항목 리스트 -->
+                            <div class="space-y-3">
+                                <template x-for="(item, idx) in getFilteredComplianceItems()" :key="idx">
+                                    <div class="bg-white rounded-xl border border-slate-200 p-4 flex items-start gap-4">
+                                        <div class="mt-0.5">
+                                            <span class="inline-flex items-center justify-center w-8 h-8 rounded-full"
+                                                  :class="{'bg-green-100': item.status === 'met', 'bg-amber-100': item.status === 'caution', 'bg-red-100': item.status === 'not_met'}">
+                                                <i class="ph text-sm"
+                                                   :class="{'ph-check text-green-600': item.status === 'met', 'ph-warning text-amber-600': item.status === 'caution', 'ph-x text-red-600': item.status === 'not_met'}"></i>
+                                            </span>
+                                        </div>
+                                        <div class="flex-1">
+                                            <div class="flex items-center gap-2 mb-1">
+                                                <span class="font-semibold text-slate-800" x-text="item.field"></span>
+                                                <span class="text-xs px-2 py-0.5 rounded-full" :class="getComplianceStatusColor(item.status)" x-text="getComplianceStatusLabel(item.status)"></span>
+                                                <span class="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600" x-text="item.category"></span>
+                                                <span x-show="item.importance === 'high'" class="text-xs text-red-500">필수</span>
                                             </div>
-                                            <span class="text-xs text-slate-400" x-text="'Row ' + (item.rows || []).join(', ')"></span>
-                                        </div>
-                                        <p class="text-sm font-semibold text-slate-900 mb-2" x-text="item.description"></p>
-                                        <div class="flex flex-wrap gap-1.5 mb-3">
-                                            <template x-for="field in (item.fields || [])" :key="field">
-                                                <span class="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md font-medium" x-text="field"></span>
-                                            </template>
-                                        </div>
-                                        <div class="flex items-center gap-2 text-xs text-slate-500">
-                                            <i class="ph ph-lightbulb text-amber-500"></i>
-                                            <span x-text="item.suggestion"></span>
+                                            <p class="text-sm text-slate-600" x-text="item.description"></p>
+                                            <p x-show="item.found_column" class="text-xs text-slate-400 mt-1" x-text="`발견된 컬럼: ${item.found_column}`"></p>
+                                            <p x-show="item.kifrs_reference" class="text-xs text-indigo-500 mt-0.5" x-text="item.kifrs_reference"></p>
                                         </div>
                                     </div>
-                                </div>
-                            </template>
+                                </template>
+                            </div>
 
-                            <!-- Empty State -->
-                            <template x-if="getFilteredCrossFieldResults().length === 0 && crossFieldResults.total_issues === 0">
-                                <div class="bg-white p-12 rounded-2xl border border-green-200 text-center">
-                                    <div class="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-4">
-                                        <i class="ph-fill ph-check-circle text-3xl text-green-500"></i>
-                                    </div>
-                                    <p class="font-bold text-green-700">논리 모순이 발견되지 않았습니다</p>
-                                    <p class="text-sm text-slate-500 mt-1">필드 간 데이터 관계가 일관성 있습니다.</p>
+                            <!-- 권고사항 -->
+                            <template x-if="complianceResults.recommendations?.length > 0">
+                                <div class="bg-amber-50 rounded-2xl border border-amber-200 p-6">
+                                    <h3 class="font-semibold text-amber-800 mb-3">권고사항</h3>
+                                    <ul class="space-y-2">
+                                        <template x-for="(rec, idx) in complianceResults.recommendations" :key="idx">
+                                            <li class="text-sm text-amber-700 flex items-start gap-2">
+                                                <i class="ph ph-arrow-right mt-0.5 text-amber-500"></i>
+                                                <span x-text="rec"></span>
+                                            </li>
+                                        </template>
+                                    </ul>
                                 </div>
                             </template>
                         </div>
                     </template>
+                </div>
 
-                    <!-- ==================== Data Profile Results ==================== -->
-                    <template x-if="!smartAnalysisLoading && smartAnalysisTab === 'data_profile' && dataProfileResults">
-                        <div class="space-y-4">
-                            <!-- Health Score Card -->
-                            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                                <div class="flex items-center gap-6">
-                                    <!-- Score Circle -->
-                                    <div class="relative w-24 h-24 flex-shrink-0">
-                                        <svg class="w-24 h-24 -rotate-90" viewBox="0 0 100 100">
-                                            <circle cx="50" cy="50" r="42" fill="none" stroke="#e2e8f0" stroke-width="8"/>
-                                            <circle cx="50" cy="50" r="42" fill="none" stroke-width="8" stroke-linecap="round"
-                                                    :stroke="dataProfileResults.health_score >= 80 ? '#22c55e' : dataProfileResults.health_score >= 60 ? '#f59e0b' : '#ef4444'"
-                                                    :stroke-dasharray="(dataProfileResults.health_score / 100 * 264) + ' 264'"/>
-                                        </svg>
-                                        <div class="absolute inset-0 flex items-center justify-center">
-                                            <span class="text-2xl font-black" :class="getHealthScoreColor(dataProfileResults.health_score)" x-text="dataProfileResults.health_score"></span>
+                <!-- NATURAL LANGUAGE FIX VIEW -->
+                <div x-show="currentTab === 'natural_fix'" class="max-w-6xl mx-auto space-y-6 animate-in fade-in duration-500">
+                    <div>
+                        <h2 class="text-2xl font-bold text-slate-900">자연어 수정 지시</h2>
+                        <p class="text-slate-500 mt-1">한국어로 데이터 수정 지시를 내리면 AI가 해석하여 적용합니다.</p>
+                    </div>
+
+                    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                        <div class="flex items-center gap-3 mb-4">
+                            <i class="ph ph-pencil-simple-line text-xl text-orange-500"></i>
+                            <span class="font-semibold text-slate-800">수정 지시</span>
+                            <span x-show="smartAnalysisFileA || fileA" class="text-sm text-green-600 bg-green-50 px-2 py-0.5 rounded-full" x-text="(smartAnalysisFileA || fileA)?.name"></span>
+                        </div>
+
+                        <div class="flex gap-3">
+                            <input type="text" x-model="naturalFixText"
+                                   @keydown.enter="runNaturalFix(true)"
+                                   class="flex-1 px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+                                   placeholder="예: 퇴직일 비어있는 퇴직자는 2025-12-31로 채워줘">
+                            <button @click="runNaturalFix(true)"
+                                    :disabled="naturalFixLoading"
+                                    class="px-5 py-3 bg-orange-500 text-white rounded-xl hover:bg-orange-600 disabled:opacity-50 font-medium text-sm whitespace-nowrap">
+                                <span x-show="!naturalFixLoading">미리보기</span>
+                                <span x-show="naturalFixLoading" class="flex items-center gap-2">
+                                    <i class="ph ph-spinner animate-spin"></i> 분석중...
+                                </span>
+                            </button>
+                        </div>
+
+                        <div class="mt-3 flex flex-wrap gap-2">
+                            <span class="text-xs text-slate-400">예시:</span>
+                            <button @click="naturalFixText = '퇴직일 비어있는 퇴직자는 20251231로 채워줘'" class="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-lg hover:bg-slate-200">퇴직일 채우기</button>
+                            <button @click="naturalFixText = '성별이 M인 것을 1로 바꿔줘'" class="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-lg hover:bg-slate-200">성별 코드 변환</button>
+                            <button @click="naturalFixText = '급여가 0인 행의 급여를 삭제해줘'" class="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-lg hover:bg-slate-200">급여 0 삭제</button>
+                        </div>
+                    </div>
+
+                    <!-- 미리보기 결과 -->
+                    <template x-if="naturalFixResults && naturalFixResults.status === 'preview'">
+                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+                            <div class="flex items-center justify-between">
+                                <h3 class="font-semibold text-slate-800">수정 미리보기</h3>
+                                <span class="text-sm bg-orange-50 text-orange-700 px-3 py-1 rounded-full" x-text="`${naturalFixResults.affected_count}건 영향`"></span>
+                            </div>
+
+                            <div class="bg-slate-50 rounded-xl p-3 text-sm text-slate-600">
+                                <span class="font-medium">AI 해석:</span> <span x-text="naturalFixResults.interpretation"></span>
+                                <span class="ml-2 text-xs text-slate-400" x-text="`(신뢰도: ${Math.round(naturalFixResults.confidence * 100)}%)`"></span>
+                            </div>
+
+                            <div class="text-sm text-slate-600">
+                                <span class="font-medium">수정 대상:</span> <span x-text="naturalFixResults.target_field"></span> →
+                                <span class="font-mono bg-green-50 text-green-700 px-1 rounded" x-text="naturalFixResults.new_value"></span>
+                            </div>
+
+                            <!-- 변경 미리보기 테이블 -->
+                            <template x-if="naturalFixResults.changes_preview?.length > 0">
+                                <div class="overflow-x-auto border border-slate-200 rounded-xl">
+                                    <table class="w-full text-xs">
+                                        <thead class="bg-slate-50">
+                                            <tr>
+                                                <th class="px-3 py-2 text-left">시트</th>
+                                                <th class="px-3 py-2 text-left">행</th>
+                                                <th class="px-3 py-2 text-left">컬럼</th>
+                                                <th class="px-3 py-2 text-left">변경 전</th>
+                                                <th class="px-3 py-2 text-left">변경 후</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <template x-for="(change, idx) in naturalFixResults.changes_preview" :key="idx">
+                                                <tr class="border-b border-slate-100">
+                                                    <td class="px-3 py-2" x-text="change.sheet"></td>
+                                                    <td class="px-3 py-2" x-text="change.row"></td>
+                                                    <td class="px-3 py-2" x-text="change.column"></td>
+                                                    <td class="px-3 py-2 text-red-500 line-through" x-text="change.old_value || '(빈값)'"></td>
+                                                    <td class="px-3 py-2 text-green-600 font-medium" x-text="change.new_value"></td>
+                                                </tr>
+                                            </template>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </template>
+
+                            <!-- 적용 버튼 -->
+                            <div class="flex justify-end gap-3">
+                                <button @click="naturalFixResults = null"
+                                        class="px-4 py-2 text-sm text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200">취소</button>
+                                <button @click="runNaturalFix(false)"
+                                        :disabled="naturalFixLoading"
+                                        class="px-6 py-2 text-sm text-white bg-orange-600 rounded-lg hover:bg-orange-700 disabled:opacity-50 font-medium">
+                                    <span x-show="!naturalFixLoading">수정 적용 및 다운로드</span>
+                                    <span x-show="naturalFixLoading"><i class="ph ph-spinner animate-spin"></i> 적용중...</span>
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+
+                    <template x-if="naturalFixApplied">
+                        <div class="bg-green-50 rounded-2xl border border-green-200 p-6 text-center">
+                            <i class="ph ph-check-circle text-4xl text-green-500 mb-2"></i>
+                            <p class="text-green-700 font-medium">수정이 완료되어 파일이 다운로드되었습니다.</p>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- FILE COMPARISON VIEW -->
+                <div x-show="currentTab === 'compare'" class="max-w-6xl mx-auto space-y-6 animate-in fade-in duration-500">
+                    <div>
+                        <h2 class="text-2xl font-bold text-slate-900">시계열 파일 비교 검증</h2>
+                        <p class="text-slate-500 mt-1">다기간 파일을 비교하여 비정상 변동을 탐지합니다.</p>
+                    </div>
+
+                    <!-- 파일 업로드 -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                            <div class="flex items-center gap-2 mb-3">
+                                <span class="w-6 h-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold">1</span>
+                                <span class="font-semibold text-slate-800">이전 시점 파일</span>
+                            </div>
+                            <label class="flex flex-col items-center justify-center border-2 border-dashed rounded-xl p-6 cursor-pointer transition-colors"
+                                   :class="compareFile1 ? 'border-blue-300 bg-blue-50' : 'border-slate-300 hover:border-blue-400'">
+                                <i class="ph ph-file-arrow-up text-2xl mb-2" :class="compareFile1 ? 'text-blue-500' : 'text-slate-400'"></i>
+                                <span class="text-sm" :class="compareFile1 ? 'text-blue-600 font-medium' : 'text-slate-500'" x-text="compareFile1?.name || '파일을 선택하세요'"></span>
+                                <input type="file" accept=".xlsx,.xls" @change="handleCompareFileSelect($event, 1)" class="hidden">
+                            </label>
+                        </div>
+                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                            <div class="flex items-center gap-2 mb-3">
+                                <span class="w-6 h-6 rounded-full bg-green-100 text-green-600 flex items-center justify-center text-xs font-bold">2</span>
+                                <span class="font-semibold text-slate-800">현재 시점 파일</span>
+                            </div>
+                            <label class="flex flex-col items-center justify-center border-2 border-dashed rounded-xl p-6 cursor-pointer transition-colors"
+                                   :class="compareFile2 ? 'border-green-300 bg-green-50' : 'border-slate-300 hover:border-green-400'">
+                                <i class="ph ph-file-arrow-up text-2xl mb-2" :class="compareFile2 ? 'text-green-500' : 'text-slate-400'"></i>
+                                <span class="text-sm" :class="compareFile2 ? 'text-green-600 font-medium' : 'text-slate-500'" x-text="compareFile2?.name || '파일을 선택하세요'"></span>
+                                <input type="file" accept=".xlsx,.xls" @change="handleCompareFileSelect($event, 2)" class="hidden">
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="text-center">
+                        <button @click="runFileComparison()"
+                                :disabled="compareLoading || !compareFile1 || !compareFile2"
+                                class="px-8 py-3 bg-slate-800 text-white rounded-xl hover:bg-slate-900 disabled:opacity-50 font-medium">
+                            <span x-show="!compareLoading">비교 시작</span>
+                            <span x-show="compareLoading" class="flex items-center gap-2">
+                                <i class="ph ph-spinner animate-spin"></i> 비교중...
+                            </span>
+                        </button>
+                    </div>
+
+                    <!-- 비교 결과 -->
+                    <template x-if="compareResults">
+                        <div class="space-y-6">
+                            <!-- 요약 카드 -->
+                            <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+                                <div class="bg-blue-50 rounded-xl border border-blue-200 p-4 text-center">
+                                    <div class="text-xl font-bold text-blue-600" x-text="compareResults.summary.total_added"></div>
+                                    <div class="text-xs text-blue-700">신규 추가</div>
+                                </div>
+                                <div class="bg-red-50 rounded-xl border border-red-200 p-4 text-center">
+                                    <div class="text-xl font-bold text-red-600" x-text="compareResults.summary.total_removed"></div>
+                                    <div class="text-xs text-red-700">삭제/퇴직</div>
+                                </div>
+                                <div class="bg-amber-50 rounded-xl border border-amber-200 p-4 text-center">
+                                    <div class="text-xl font-bold text-amber-600" x-text="compareResults.summary.total_changed"></div>
+                                    <div class="text-xs text-amber-700">변동</div>
+                                </div>
+                                <div class="bg-green-50 rounded-xl border border-green-200 p-4 text-center">
+                                    <div class="text-xl font-bold text-green-600" x-text="compareResults.summary.total_unchanged"></div>
+                                    <div class="text-xs text-green-700">미변동</div>
+                                </div>
+                                <div class="bg-purple-50 rounded-xl border border-purple-200 p-4 text-center">
+                                    <div class="text-xl font-bold text-purple-600" x-text="compareResults.summary.total_anomalies"></div>
+                                    <div class="text-xs text-purple-700">이상 항목</div>
+                                </div>
+                            </div>
+
+                            <!-- 이상 항목 필터 -->
+                            <template x-if="compareResults.anomalies?.length > 0">
+                                <div class="space-y-4">
+                                    <div class="flex items-center justify-between">
+                                        <h3 class="font-semibold text-slate-800">이상 항목</h3>
+                                        <div class="flex gap-2">
+                                            <button @click="compareAnomalyFilter = 'all'" class="px-3 py-1 rounded-lg text-xs" :class="compareAnomalyFilter === 'all' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'">전체</button>
+                                            <button @click="compareAnomalyFilter = 'high'" class="px-3 py-1 rounded-lg text-xs" :class="compareAnomalyFilter === 'high' ? 'bg-red-600 text-white' : 'bg-red-50 text-red-700'">심각</button>
+                                            <button @click="compareAnomalyFilter = 'medium'" class="px-3 py-1 rounded-lg text-xs" :class="compareAnomalyFilter === 'medium' ? 'bg-amber-600 text-white' : 'bg-amber-50 text-amber-700'">주의</button>
                                         </div>
                                     </div>
 
-                                    <div class="flex-1">
-                                        <p class="font-bold text-slate-900 text-lg">데이터 건강 점수</p>
-                                        <p class="text-sm text-slate-500 mt-1" x-text="dataProfileResults.summary"></p>
-
-                                        <!-- Category Score Bars -->
-                                        <div class="mt-3 space-y-2">
-                                            <template x-for="(score, category) in (dataProfileResults.category_scores || {})" :key="category">
-                                                <div class="flex items-center gap-3">
-                                                    <span class="text-xs text-slate-500 w-24 text-right" x-text="category"></span>
-                                                    <div class="flex-1 bg-slate-100 rounded-full h-2">
-                                                        <div class="h-2 rounded-full transition-all duration-500"
-                                                             :class="score >= 80 ? 'bg-green-500' : score >= 60 ? 'bg-amber-500' : 'bg-red-500'"
-                                                             :style="'width: ' + score + '%'"></div>
+                                    <div class="space-y-2">
+                                        <template x-for="(anomaly, idx) in getFilteredAnomalies()" :key="idx">
+                                            <div class="bg-white rounded-xl border p-4 flex items-start gap-3"
+                                                 :class="anomaly.severity === 'high' ? 'border-red-200' : anomaly.severity === 'medium' ? 'border-amber-200' : 'border-slate-200'">
+                                                <span class="mt-0.5 px-2 py-0.5 rounded text-xs font-medium"
+                                                      :class="anomaly.severity === 'high' ? 'bg-red-100 text-red-700' : anomaly.severity === 'medium' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'"
+                                                      x-text="anomaly.severity === 'high' ? '심각' : anomaly.severity === 'medium' ? '주의' : '참고'"></span>
+                                                <div class="flex-1">
+                                                    <p class="text-sm font-medium text-slate-800" x-text="anomaly.description"></p>
+                                                    <div class="flex gap-4 mt-1 text-xs text-slate-500">
+                                                        <span x-show="anomaly.employee_id" x-text="`사번: ${anomaly.employee_id}`"></span>
+                                                        <span x-show="anomaly.field" x-text="`필드: ${anomaly.field}`"></span>
+                                                        <span x-show="anomaly.change_rate" x-text="`변동률: ${anomaly.change_rate}%`"></span>
                                                     </div>
-                                                    <span class="text-xs font-bold w-8" :class="score >= 80 ? 'text-green-600' : score >= 60 ? 'text-amber-600' : 'text-red-600'" x-text="score"></span>
                                                 </div>
-                                            </template>
-                                        </div>
+                                            </div>
+                                        </template>
                                     </div>
+                                </div>
+                            </template>
+
+                            <!-- 변동 상세 -->
+                            <template x-if="compareResults.details?.length > 0">
+                                <div class="space-y-3">
+                                    <h3 class="font-semibold text-slate-800">인원 변동 상세</h3>
+                                    <template x-for="(detail, idx) in compareResults.details" :key="idx">
+                                        <div class="bg-white rounded-xl border border-slate-200 p-4">
+                                            <div class="flex items-center gap-2 mb-2">
+                                                <span class="px-2 py-0.5 rounded text-xs font-medium"
+                                                      :class="detail.type === 'added' ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'"
+                                                      x-text="detail.type === 'added' ? '신규' : '삭제'"></span>
+                                                <span class="text-sm font-medium text-slate-800" x-text="detail.description"></span>
+                                            </div>
+                                            <p class="text-xs text-slate-500 font-mono" x-text="detail.ids?.join(', ')"></p>
+                                        </div>
+                                    </template>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- DBO VALIDATION VIEW -->
+                <div x-show="currentTab === 'dbo_check'" class="max-w-6xl mx-auto space-y-6 animate-in fade-in duration-500">
+                    <div>
+                        <h2 class="text-2xl font-bold text-slate-900">K-IFRS 1019 DBO 전문 검증</h2>
+                        <p class="text-slate-500 mt-1">보험수리적 가정, 입력 데이터 무결성, 재무 정합성, 규정 준수를 종합적으로 검증합니다.</p>
+                    </div>
+
+                    <!-- Assumptions Input Card -->
+                    <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-6">
+                        <div class="flex items-start gap-4">
+                            <div class="w-10 h-10 rounded-xl bg-purple-100 text-purple-600 flex items-center justify-center shrink-0">
+                                <i class="ph ph-sliders-horizontal text-2xl"></i>
+                            </div>
+                            <div class="flex-1">
+                                <h3 class="font-bold text-slate-900">보험수리적 가정 입력</h3>
+                                <p class="text-xs text-slate-500 mt-0.5">가정값을 입력하면 K-IFRS 1019 기준으로 합리성을 검증합니다. 비워두면 데이터만 검증합니다.</p>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+                            <div class="space-y-1.5">
+                                <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">평가기준일</label>
+                                <input type="text" x-model="dboBaseDate" placeholder="YYYYMMDD" class="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-primary/20 outline-none">
+                            </div>
+                            <div class="space-y-1.5">
+                                <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">할인율 (%)</label>
+                                <input type="text" x-model="dboDiscountRate" placeholder="예: 4.5" class="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-primary/20 outline-none">
+                            </div>
+                            <div class="space-y-1.5">
+                                <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">급여상승률 (%)</label>
+                                <input type="text" x-model="dboSalaryGrowth" placeholder="예: 3.5" class="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-primary/20 outline-none">
+                            </div>
+                            <div class="space-y-1.5">
+                                <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">퇴직률 (%)</label>
+                                <input type="text" x-model="dboTurnoverRate" placeholder="예: 5.0" class="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-primary/20 outline-none">
+                            </div>
+                            <div class="space-y-1.5">
+                                <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">정년 (세)</label>
+                                <input type="text" x-model="dboRetirementAge" placeholder="예: 60" class="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-primary/20 outline-none">
+                            </div>
+                        </div>
+
+                        <!-- File Upload + Run -->
+                        <div class="flex items-center gap-4 pt-2">
+                            <div class="flex-1 relative">
+                                <input type="file" @change="handleSmartAnalysisFileSelect($event)" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" accept=".xlsx,.xls">
+                                <div class="px-4 py-2.5 bg-slate-50 border border-dashed border-slate-300 rounded-xl text-sm text-slate-500 flex items-center gap-2">
+                                    <i class="ph ph-file-arrow-up text-lg"></i>
+                                    <span x-text="getSmartAnalysisFile()?.name || '검증할 파일 선택 (또는 기존 업로드 파일 사용)'"></span>
+                                </div>
+                            </div>
+                            <button @click="runDboValidation()" :disabled="dboLoading || !getSmartAnalysisFile()"
+                                    class="bg-purple-600 hover:bg-purple-700 text-white px-8 py-2.5 rounded-xl font-bold transition-all flex items-center gap-2 disabled:opacity-50 disabled:grayscale shadow-lg shadow-purple-200">
+                                <svg x-show="dboLoading" class="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                <i x-show="!dboLoading" class="ph ph-play text-lg"></i>
+                                <span x-text="dboLoading ? 'DBO 검증 중...' : 'DBO 검증 실행'"></span>
+                            </button>
+                        </div>
+
+                        <!-- Standard Rules Button -->
+                        <div class="flex items-center gap-3 pt-2 border-t border-slate-100">
+                            <button @click="loadStandardRules()" :disabled="dboStandardRulesLoading"
+                                    class="text-sm text-primary font-bold hover:underline underline-offset-4 flex items-center gap-1 disabled:opacity-50">
+                                <i class="ph ph-list-checks"></i> 표준 규칙 템플릿 보기
+                            </button>
+                            <span class="text-slate-300">|</span>
+                            <button @click="applyStandardRules()"
+                                    class="text-sm text-purple-600 font-bold hover:underline underline-offset-4 flex items-center gap-1">
+                                <i class="ph ph-plus-circle"></i> 현재 규칙 파일에 표준 규칙 적용
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Standard Rules Preview (collapsible) -->
+                    <template x-if="dboStandardRules">
+                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                            <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+                                <h3 class="font-bold text-slate-900 flex items-center gap-2">
+                                    <i class="ph ph-list-checks text-primary"></i> K-IFRS 표준 규칙 템플릿
+                                    <span class="text-xs font-medium text-slate-400" x-text="dboStandardRules.total + '개'"></span>
+                                </h3>
+                                <button @click="dboStandardRules = null" class="text-slate-400 hover:text-slate-600"><i class="ph ph-x"></i></button>
+                            </div>
+                            <table class="w-full text-left text-xs border-collapse">
+                                <thead>
+                                    <tr class="bg-slate-50 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-200">
+                                        <th class="px-6 py-3">필드명</th>
+                                        <th class="px-6 py-3">규칙</th>
+                                        <th class="px-6 py-3 w-24 text-center">유형</th>
+                                        <th class="px-6 py-3 w-24 text-center">분류</th>
+                                        <th class="px-6 py-3 w-20 text-center">K-IFRS</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-100">
+                                    <template x-for="(tmpl, idx) in dboStandardRules.templates" :key="idx">
+                                        <tr class="hover:bg-slate-50/50">
+                                            <td class="px-6 py-3 font-bold text-slate-900" x-text="tmpl.field_name"></td>
+                                            <td class="px-6 py-3 text-slate-600" x-text="tmpl.rule_text"></td>
+                                            <td class="px-6 py-3 text-center"><span class="px-1.5 py-0.5 bg-blue-50 text-blue-700 text-[10px] font-black rounded" x-text="tmpl.ai_rule_type"></span></td>
+                                            <td class="px-6 py-3 text-center"><span class="text-slate-500" x-text="tmpl.category"></span></td>
+                                            <td class="px-6 py-3 text-center text-[10px] text-primary font-bold" x-text="tmpl.kifrs_ref"></td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </template>
+
+                    <!-- Results -->
+                    <template x-if="dboResults">
+                        <div class="space-y-6">
+                            <!-- Score + Summary Cards -->
+                            <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                                <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm text-center md:col-span-1">
+                                    <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">DBO 검증 점수</p>
+                                    <p class="text-5xl font-black" :class="getDboScoreTextColor(dboResults.dbo_validation_score)" x-text="dboResults.dbo_validation_score"></p>
+                                    <div class="w-full bg-slate-100 h-2 rounded-full mt-4 overflow-hidden">
+                                        <div class="h-full rounded-full bg-gradient-to-r transition-all duration-500" :class="getDboScoreColor(dboResults.dbo_validation_score)" :style="'width: ' + dboResults.dbo_validation_score + '%'"></div>
+                                    </div>
+                                    <p class="text-xs text-slate-500 mt-2">기준일: <span x-text="dboResults.base_date"></span></p>
+                                </div>
+                                <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <div class="w-8 h-8 rounded-lg bg-red-100 text-red-600 flex items-center justify-center"><i class="ph ph-warning-octagon"></i></div>
+                                        <span class="text-[10px] font-bold text-red-600 uppercase">Critical</span>
+                                    </div>
+                                    <p class="text-2xl font-black text-red-600" x-text="dboResults.severity_counts?.critical || 0"></p>
+                                    <p class="text-xs text-slate-500 mt-1">심각 이슈</p>
+                                </div>
+                                <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <div class="w-8 h-8 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center"><i class="ph ph-warning"></i></div>
+                                        <span class="text-[10px] font-bold text-amber-600 uppercase">Warning</span>
+                                    </div>
+                                    <p class="text-2xl font-black text-amber-600" x-text="dboResults.severity_counts?.warning || 0"></p>
+                                    <p class="text-xs text-slate-500 mt-1">주의 사항</p>
+                                </div>
+                                <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <div class="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center"><i class="ph ph-info"></i></div>
+                                        <span class="text-[10px] font-bold text-blue-600 uppercase">Info</span>
+                                    </div>
+                                    <p class="text-2xl font-black text-blue-600" x-text="dboResults.severity_counts?.info || 0"></p>
+                                    <p class="text-xs text-slate-500 mt-1">참고 사항</p>
                                 </div>
                             </div>
 
-                            <!-- Findings Filter -->
-                            <template x-if="dataProfileResults.findings && dataProfileResults.findings.length > 0">
-                                <div class="flex items-center justify-between">
-                                    <p class="text-sm font-semibold text-slate-700">
-                                        발견된 이슈 <span class="text-violet-600" x-text="getFilteredProfileFindings().length + '건'"></span>
-                                    </p>
-                                    <select x-model="profileCategoryFilter" class="text-xs border border-slate-200 rounded-lg px-3 py-1.5 bg-white">
-                                        <option value="all">전체 카테고리</option>
-                                        <template x-for="cat in getProfileCategories()" :key="cat.value">
-                                            <option :value="cat.value" x-text="cat.label"></option>
+                            <!-- Compliance Checklist -->
+                            <template x-if="dboResults.compliance">
+                                <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                                    <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+                                        <h3 class="font-bold text-slate-900 flex items-center gap-2">
+                                            <i class="ph ph-shield-check text-primary"></i> K-IFRS 1019 규정 준수 체크리스트
+                                        </h3>
+                                        <span class="text-sm font-bold" :class="getDboScoreTextColor(dboResults.compliance.score)" x-text="'준수율: ' + dboResults.compliance.score + '%'"></span>
+                                    </div>
+                                    <div class="divide-y divide-slate-100">
+                                        <template x-for="check in dboResults.compliance.checks" :key="check.article">
+                                            <div class="px-6 py-4 flex items-start gap-4 hover:bg-slate-50/50 transition-colors">
+                                                <div class="mt-0.5"><i class="ph-fill text-xl" :class="getComplianceCheckIcon(check.status)"></i></div>
+                                                <div class="flex-1 min-w-0">
+                                                    <div class="flex items-center gap-2 mb-1">
+                                                        <span class="text-[10px] font-black px-1.5 py-0.5 bg-primary/10 text-primary rounded" x-text="check.article"></span>
+                                                        <span class="text-sm font-bold text-slate-900" x-text="check.title"></span>
+                                                    </div>
+                                                    <p class="text-xs text-slate-500" x-text="check.description"></p>
+                                                    <p class="text-xs text-slate-400 mt-1 font-mono" x-text="check.details"></p>
+                                                </div>
+                                                <span class="text-[10px] font-black px-2 py-1 rounded-md uppercase shrink-0"
+                                                      :class="{
+                                                          'bg-green-100 text-green-700': check.status === 'pass',
+                                                          'bg-red-100 text-red-700': check.status === 'fail',
+                                                          'bg-amber-100 text-amber-700': check.status === 'warning',
+                                                          'bg-slate-100 text-slate-500': check.status === 'skip'
+                                                      }" x-text="check.status"></span>
+                                            </div>
                                         </template>
-                                    </select>
+                                    </div>
                                 </div>
                             </template>
 
-                            <!-- Finding Cards -->
-                            <template x-for="(finding, idx) in getFilteredProfileFindings()" :key="idx">
-                                <div class="bg-white rounded-2xl border shadow-sm overflow-hidden" :class="getSeverityColor(finding.severity)">
-                                    <div class="p-5">
-                                        <div class="flex items-start justify-between mb-3">
-                                            <div class="flex items-center gap-2">
-                                                <span class="text-xs font-bold px-2 py-0.5 rounded-full" :class="getSeverityBadge(finding.severity)" x-text="getSeverityLabel(finding.severity)"></span>
-                                                <span class="text-xs text-slate-400" x-text="finding.sheet"></span>
-                                                <span class="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md" x-text="finding.column"></span>
+                            <!-- Issue List with Category Filter -->
+                            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                                <div class="px-6 py-4 border-b border-slate-100 flex flex-wrap items-center gap-3">
+                                    <h3 class="font-bold text-slate-900 flex items-center gap-2">
+                                        <i class="ph ph-list-magnifying-glass text-primary"></i> 검증 이슈 상세
+                                    </h3>
+                                    <div class="flex items-center gap-2 ml-auto flex-wrap">
+                                        <button @click="dboCategoryFilter = 'all'"
+                                                :class="dboCategoryFilter === 'all' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+                                                class="px-3 py-1 rounded-lg text-xs font-bold transition-all">전체</button>
+                                        <template x-for="cat in getDboCategories()" :key="cat.value">
+                                            <button @click="dboCategoryFilter = cat.value"
+                                                    :class="dboCategoryFilter === cat.value ? 'bg-primary text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+                                                    class="px-3 py-1 rounded-lg text-xs font-bold transition-all">
+                                                <span x-text="cat.label"></span>
+                                                <span class="ml-1 opacity-70" x-text="'(' + cat.count + ')'"></span>
+                                            </button>
+                                        </template>
+                                    </div>
+                                </div>
+                                <div class="divide-y divide-slate-100 max-h-[500px] overflow-y-auto custom-scrollbar">
+                                    <template x-for="(issue, idx) in getDboFilteredIssues()" :key="idx">
+                                        <div class="px-6 py-4 flex items-start gap-4 hover:bg-slate-50/50 transition-colors">
+                                            <div class="mt-0.5">
+                                                <span class="text-[10px] font-black px-1.5 py-0.5 rounded-md" :class="getDboSeverityBadge(issue.severity)" x-text="getDboSeverityLabel(issue.severity)"></span>
                                             </div>
-                                            <template x-if="finding.affected_count > 0">
-                                                <span class="text-xs text-slate-400" x-text="finding.affected_count + '건 영향'"></span>
-                                            </template>
+                                            <div class="flex-1 min-w-0">
+                                                <p class="text-sm text-slate-900" x-text="issue.message"></p>
+                                                <div class="flex items-center gap-3 mt-1.5 flex-wrap">
+                                                    <span x-show="issue.sheet" class="text-[10px] font-mono text-slate-400 flex items-center gap-1">
+                                                        <i class="ph ph-table"></i> <span x-text="issue.sheet"></span>
+                                                    </span>
+                                                    <span x-show="issue.field" class="text-[10px] font-mono text-slate-400 flex items-center gap-1">
+                                                        <i class="ph ph-columns"></i> <span x-text="issue.field"></span>
+                                                    </span>
+                                                    <span x-show="issue.count" class="text-[10px] font-mono text-slate-400 flex items-center gap-1">
+                                                        <i class="ph ph-hash"></i> <span x-text="issue.count + '건'"></span>
+                                                    </span>
+                                                    <span x-show="issue.kifrs_ref" class="text-[10px] font-bold text-primary flex items-center gap-1">
+                                                        <i class="ph ph-book-open"></i> <span x-text="issue.kifrs_ref"></span>
+                                                    </span>
+                                                </div>
+                                            </div>
                                         </div>
-                                        <p class="text-sm font-semibold text-slate-900 mb-2" x-text="finding.description"></p>
-                                        <template x-if="finding.examples && finding.examples.length > 0">
-                                            <div class="flex flex-wrap gap-1.5">
-                                                <template x-for="ex in finding.examples.slice(0, 5)" :key="ex">
-                                                    <span class="text-xs bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded-md font-mono" x-text="ex"></span>
-                                                </template>
+                                    </template>
+                                    <template x-if="getDboFilteredIssues().length === 0">
+                                        <div class="px-6 py-8 text-center text-slate-400">
+                                            <i class="ph ph-checks text-3xl mb-2"></i>
+                                            <p class="text-sm">이 카테고리에 해당하는 이슈가 없습니다.</p>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+
+                            <!-- Field Mapping Info -->
+                            <template x-if="dboResults.field_mappings && Object.keys(dboResults.field_mappings).length > 0">
+                                <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden" x-data="{ showMappings: false }">
+                                    <button @click="showMappings = !showMappings" class="w-full px-6 py-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                                        <h3 class="font-bold text-slate-900 flex items-center gap-2 text-sm">
+                                            <i class="ph ph-arrows-left-right text-primary"></i> 자동 필드 매핑 결과
+                                        </h3>
+                                        <i class="ph ph-caret-down text-slate-400 transition-transform" :class="showMappings ? 'rotate-180' : ''"></i>
+                                    </button>
+                                    <div x-show="showMappings" x-collapse class="px-6 pb-4 border-t border-slate-100 pt-4">
+                                        <template x-for="(mappings, sheetName) in dboResults.field_mappings" :key="sheetName">
+                                            <div class="mb-4">
+                                                <p class="text-xs font-bold text-slate-500 mb-2" x-text="'시트: ' + sheetName"></p>
+                                                <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                                                    <template x-for="(col, field) in mappings" :key="field">
+                                                        <div class="flex items-center gap-2 text-xs px-2 py-1.5 bg-slate-50 rounded-lg">
+                                                            <span class="text-slate-400" x-text="field"></span>
+                                                            <i class="ph ph-arrow-right text-[10px] text-slate-300"></i>
+                                                            <span class="font-bold text-slate-900" x-text="col"></span>
+                                                        </div>
+                                                    </template>
+                                                </div>
                                             </div>
                                         </template>
                                     </div>
-                                </div>
-                            </template>
-
-                            <!-- All Clear State -->
-                            <template x-if="dataProfileResults.findings && dataProfileResults.findings.length === 0">
-                                <div class="bg-white p-12 rounded-2xl border border-green-200 text-center">
-                                    <div class="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-4">
-                                        <i class="ph-fill ph-heart text-3xl text-green-500"></i>
-                                    </div>
-                                    <p class="font-bold text-green-700">데이터 상태가 양호합니다</p>
-                                    <p class="text-sm text-slate-500 mt-1">특별한 이상 소견이 발견되지 않았습니다.</p>
                                 </div>
                             </template>
                         </div>
                     </template>
 
-                    <!-- Initial Empty State (no results yet) -->
-                    <template x-if="!smartAnalysisLoading && !crossFieldResults && !dataProfileResults">
-                        <div class="bg-white p-12 rounded-2xl border border-slate-200 shadow-sm text-center">
-                            <div class="w-20 h-20 rounded-full bg-gradient-to-br from-violet-50 to-purple-50 flex items-center justify-center mx-auto mb-5">
-                                <i class="ph ph-sparkle text-4xl text-violet-400"></i>
+                    <!-- Empty State -->
+                    <template x-if="!dboResults && !dboLoading">
+                        <div class="bg-white rounded-3xl border border-slate-200 p-16 text-center shadow-sm">
+                            <div class="w-20 h-20 bg-purple-50 text-purple-300 rounded-full flex items-center justify-center mx-auto mb-6">
+                                <i class="ph ph-calculator text-4xl"></i>
                             </div>
-                            <p class="font-bold text-slate-700 text-lg">AI 스마트 분석</p>
-                            <p class="text-sm text-slate-500 mt-2 max-w-md mx-auto">
-                                규칙 파일 없이도 AI가 데이터의 논리적 모순, 이상치, 형식 불일치 등을 자동으로 탐지합니다.
-                                파일을 선택하고 분석 버튼을 클릭하세요.
-                            </p>
-                            <div class="flex justify-center gap-6 mt-6 text-xs text-slate-400">
-                                <span class="flex items-center gap-1"><i class="ph ph-git-diff text-violet-400"></i> 크로스필드 모순 탐지</span>
-                                <span class="flex items-center gap-1"><i class="ph ph-heartbeat text-cyan-400"></i> 데이터 건강 진단</span>
-                            </div>
+                            <h3 class="text-lg font-bold text-slate-900">DBO 전문 검증 대기</h3>
+                            <p class="text-slate-500 mt-2 text-sm max-w-md mx-auto">직원 데이터 파일을 업로드하고 보험수리 가정을 입력한 뒤 검증을 실행하세요.<br>K-IFRS 1019 기준에 따라 데이터 품질을 종합 평가합니다.</p>
                         </div>
                     </template>
                 </div>
@@ -885,9 +1638,19 @@
                     <!-- Rule Files List Grid -->
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         <template x-for="file in ruleFiles" :key="file.id">
-                            <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm hover:shadow-xl transition-all duration-300 flex flex-col group">
+                            <div class="bg-white rounded-2xl border-2 p-6 shadow-sm hover:shadow-xl transition-all duration-300 flex flex-col group"
+                                 :class="selectedSavedRuleId === file.id ? 'border-primary ring-2 ring-primary/10' : 'border-slate-200'">
+                                <!-- Active Badge -->
+                                <div x-show="selectedSavedRuleId === file.id" class="flex items-center gap-1.5 mb-3 animate-in fade-in duration-300">
+                                    <span class="px-2.5 py-0.5 bg-primary text-white text-[10px] font-bold rounded-full uppercase tracking-wider flex items-center gap-1">
+                                        <i class="ph-fill ph-check-circle text-xs"></i>
+                                        검증에 사용 중
+                                    </span>
+                                </div>
+
                                 <div class="flex items-start justify-between mb-4">
-                                    <div class="w-12 h-12 rounded-xl bg-slate-50 text-slate-400 group-hover:bg-primary/10 group-hover:text-primary flex items-center justify-center transition-colors">
+                                    <div class="w-12 h-12 rounded-xl flex items-center justify-center transition-colors"
+                                         :class="selectedSavedRuleId === file.id ? 'bg-primary/10 text-primary' : 'bg-slate-50 text-slate-400 group-hover:bg-primary/10 group-hover:text-primary'">
                                         <i class="ph ph-file-spreadsheet text-2xl"></i>
                                     </div>
                                     <div class="flex flex-col items-end">
@@ -895,7 +1658,7 @@
                                         <span class="text-xs font-black text-primary mt-1" x-text="'VER ' + file.file_version"></span>
                                     </div>
                                 </div>
-                                
+
                                 <h3 class="font-bold text-slate-900 text-lg mb-1 truncate" x-text="file.file_name"></h3>
                                 <p class="text-xs text-slate-500 mb-6 flex items-center gap-1">
                                     <i class="ph ph-clock"></i>
@@ -914,7 +1677,14 @@
                                 </div>
 
                                 <div class="flex items-center gap-2 mt-auto">
-                                    <button @click="viewRuleFileDetails(file.id)" class="flex-1 bg-slate-900 hover:bg-slate-800 text-white py-2 rounded-lg text-xs font-bold transition-colors">상세보기</button>
+                                    <button @click="selectedSavedRuleId = file.id; showToast(file.file_name + ' 규칙이 검증에 적용됩니다.', 'success')"
+                                            x-show="selectedSavedRuleId !== file.id"
+                                            class="flex-1 bg-primary/10 hover:bg-primary hover:text-white text-primary py-2 rounded-lg text-xs font-bold transition-colors">
+                                        검증에 사용
+                                    </button>
+                                    <button @click="viewRuleFileDetails(file.id)"
+                                            :class="selectedSavedRuleId === file.id ? 'flex-1' : ''"
+                                            class="flex-1 bg-slate-900 hover:bg-slate-800 text-white py-2 rounded-lg text-xs font-bold transition-colors">상세보기</button>
                                     <button @click="downloadRuleFile(file.id, file.file_name)" class="p-2 border border-slate-200 text-slate-400 hover:text-primary hover:border-primary/20 hover:bg-primary/5 rounded-lg transition-all" title="다운로드">
                                         <i class="ph ph-download-simple"></i>
                                     </button>
@@ -1008,6 +1778,11 @@
                                         <i class="ph ph-plus-circle"></i>
                                         규칙 추가
                                     </button>
+                                    <button @click="showAutoRulePanel = !showAutoRulePanel" class="px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2"
+                                            :class="showAutoRulePanel ? 'bg-violet-600 text-white shadow-lg shadow-violet-200' : 'bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200'">
+                                        <i class="ph ph-sparkle"></i>
+                                        AI 규칙 추론
+                                    </button>
                                     <button @click="reinterpretRules(ruleFileDetails.id)" class="bg-slate-100 hover:bg-slate-200 text-slate-700 px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2">
                                         <i class="ph ph-magic-wand"></i>
                                         AI 재해석
@@ -1017,6 +1792,83 @@
                                         원본 다운로드
                                     </button>
                                 </div>
+                            </div>
+
+                            <!-- AI 규칙 추론 접이식 패널 -->
+                            <div x-show="showAutoRulePanel" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 -translate-y-4" x-transition:enter-end="opacity-100 translate-y-0" x-transition:leave="transition ease-in duration-200" x-transition:leave-start="opacity-100 translate-y-0" x-transition:leave-end="opacity-0 -translate-y-4"
+                                 class="bg-violet-50/50 rounded-2xl border border-violet-200 shadow-sm p-6 space-y-4">
+                                <!-- 패널 헤더 -->
+                                <div class="flex items-center justify-between">
+                                    <div class="flex items-center gap-3">
+                                        <i class="ph ph-sparkle text-xl text-violet-500"></i>
+                                        <div>
+                                            <span class="font-bold text-slate-900">AI 규칙 추론</span>
+                                            <p class="text-xs text-slate-500 mt-0.5">데이터 패턴을 분석하여 암묵적 규칙을 역추론하고 제안합니다.</p>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <span x-show="smartAnalysisFileA || fileA" class="text-xs text-green-600 bg-green-50 px-2.5 py-1 rounded-full font-medium" x-text="(smartAnalysisFileA || fileA)?.name"></span>
+                                        <button @click="runAutoRuleGeneration()"
+                                                :disabled="autoRuleLoading || (!smartAnalysisFileA && !fileA)"
+                                                class="px-4 py-2 bg-violet-600 text-white rounded-xl hover:bg-violet-700 disabled:opacity-50 font-bold text-sm transition-all flex items-center gap-2">
+                                            <span x-show="!autoRuleLoading">규칙 자동 생성</span>
+                                            <span x-show="autoRuleLoading" class="flex items-center gap-2">
+                                                <i class="ph ph-spinner animate-spin"></i> 분석중...
+                                            </span>
+                                        </button>
+                                        <button @click="showAutoRulePanel = false" class="w-8 h-8 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-white flex items-center justify-center transition-all" title="패널 닫기">
+                                            <i class="ph ph-x text-sm"></i>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- 파일 미업로드 안내 -->
+                                <div x-show="!smartAnalysisFileA && !fileA" class="bg-white rounded-xl border border-violet-100 p-4 text-center">
+                                    <i class="ph ph-file-arrow-up text-2xl text-violet-300 mb-2"></i>
+                                    <p class="text-sm text-slate-500">분석할 데이터 파일을 먼저 업로드해주세요.</p>
+                                    <p class="text-xs text-slate-400 mt-1">"파일 업로드 (검증)" 탭에서 파일을 선택하면 자동으로 연동됩니다.</p>
+                                </div>
+
+                                <!-- 결과 목록 -->
+                                <template x-if="autoRuleResults">
+                                    <div class="space-y-3">
+                                        <div class="flex items-center justify-between">
+                                            <h4 class="font-bold text-sm text-slate-800">제안된 규칙 (<span x-text="autoRuleResults.total_suggestions"></span>건)</h4>
+                                            <span class="text-[10px] text-slate-400 font-mono" x-text="`Engine: ${autoRuleResults.engine}`"></span>
+                                        </div>
+
+                                        <div class="max-h-96 overflow-y-auto space-y-2 pr-1">
+                                            <template x-for="(rule, idx) in autoRuleResults.suggested_rules" :key="idx">
+                                                <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 hover:shadow-md transition-shadow">
+                                                    <div class="flex items-start justify-between">
+                                                        <div class="flex-1 min-w-0">
+                                                            <div class="flex items-center gap-2 mb-1 flex-wrap">
+                                                                <span class="px-2 py-0.5 rounded-md text-xs font-mono shrink-0"
+                                                                      :class="{'bg-blue-100 text-blue-700': rule.rule_type === 'required',
+                                                                               'bg-green-100 text-green-700': rule.rule_type === 'no_duplicates',
+                                                                               'bg-purple-100 text-purple-700': rule.rule_type === 'format',
+                                                                               'bg-amber-100 text-amber-700': rule.rule_type === 'allowed_values',
+                                                                               'bg-teal-100 text-teal-700': rule.rule_type === 'range',
+                                                                               'bg-slate-100 text-slate-700': !['required','no_duplicates','format','allowed_values','range'].includes(rule.rule_type)}"
+                                                                      x-text="rule.rule_type"></span>
+                                                                <span class="font-semibold text-slate-800 text-sm" x-text="rule.field_name"></span>
+                                                                <span class="text-xs text-slate-400" x-text="`신뢰도: ${Math.round((rule.confidence || 0) * 100)}%`"></span>
+                                                            </div>
+                                                            <p class="text-sm text-slate-600" x-text="rule.rule_text"></p>
+                                                            <p class="text-xs text-slate-400 mt-1" x-text="rule.reason"></p>
+                                                        </div>
+                                                        <button @click="adoptAutoRule(rule)"
+                                                                :disabled="rule._adopted"
+                                                                class="ml-4 px-3 py-1.5 text-sm rounded-lg border whitespace-nowrap shrink-0"
+                                                                :class="rule._adopted ? 'bg-green-50 text-green-600 border-green-200' : 'bg-white text-violet-600 border-violet-200 hover:bg-violet-50'">
+                                                            <span x-text="rule._adopted ? '등록됨' : '규칙 등록'"></span>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
                             </div>
 
                             <!-- Rules Grid by Sheet -->
@@ -1044,7 +1896,7 @@
                                                     </tr>
                                                 </thead>
                                                 <tbody class="divide-y divide-slate-100">
-                                                    <template x-for="(rule, idx) in sheet.sample_rules" :key="rule.id">
+                                                    <template x-for="(rule, idx) in [...sheet.sample_rules].sort((a, b) => (a.column_name || '').localeCompare(b.column_name || ''))" :key="rule.id">
                                                         <tr class="hover:bg-slate-50/50 transition-colors cursor-pointer group">
                                                             <td class="px-6 py-4 text-xs text-slate-400 font-medium" x-text="idx + 1"></td>
                                                             <td class="px-6 py-4 font-bold text-slate-900 text-sm" x-text="rule.column_name"></td>
@@ -1070,9 +1922,6 @@
                                                             </td>
                                                             <td class="px-6 py-4 text-center">
                                                                 <div class="flex items-center justify-center gap-1">
-                                                                    <button @click.stop="reinterpretSingleRule(rule.id)" class="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all" title="AI 재해석">
-                                                                        <i class="ph ph-magic-wand text-sm"></i>
-                                                                    </button>
                                                                     <button @click.stop="startEditRule(rule)" class="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/5 rounded-lg transition-all" title="편집">
                                                                         <i class="ph ph-pencil-simple text-sm"></i>
                                                                     </button>
@@ -1081,6 +1930,550 @@
                                                                     </button>
                                                                 </div>
                                                             </td>
+                                                        </tr>
+                                                    </template>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- 8. STATISTICS DASHBOARD VIEW -->
+                <div x-show="currentTab === 'statistics'" x-init="loadDashboardStats()" class="max-w-7xl mx-auto space-y-8 animate-in fade-in duration-500">
+                    <div>
+                        <h2 class="text-2xl font-bold text-slate-900">통계 분석 대시보드</h2>
+                        <p class="text-slate-500 mt-1">검증 세션, 오류 빈도, 규칙 정확도 등 시스템 전체 통계를 한눈에 확인합니다.</p>
+                    </div>
+
+                    <!-- Overview Cards -->
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-1">
+                            <div class="flex items-center justify-between mb-4">
+                                <div class="w-10 h-10 rounded-lg bg-primary/10 text-primary flex items-center justify-center"><i class="ph ph-clipboard-text text-xl"></i></div>
+                                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Sessions</span>
+                            </div>
+                            <p class="text-2xl font-black text-slate-900" x-text="(dashboardStats?.overview?.total_sessions || 0).toLocaleString()"></p>
+                            <p class="text-xs text-slate-500 mt-1">총 검증 세션 수</p>
+                        </div>
+                        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-1">
+                            <div class="flex items-center justify-between mb-4">
+                                <div class="w-10 h-10 rounded-lg bg-success/10 text-success flex items-center justify-center"><i class="ph ph-rows text-xl"></i></div>
+                                <span class="text-[10px] font-bold text-success uppercase tracking-widest">Rows</span>
+                            </div>
+                            <p class="text-2xl font-black text-slate-900" x-text="(dashboardStats?.overview?.total_rows_validated || 0).toLocaleString()"></p>
+                            <p class="text-xs text-slate-500 mt-1">총 검증 데이터 행</p>
+                        </div>
+                        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-1">
+                            <div class="flex items-center justify-between mb-4">
+                                <div class="w-10 h-10 rounded-lg bg-danger/10 text-danger flex items-center justify-center"><i class="ph ph-warning-circle text-xl"></i></div>
+                                <span class="text-[10px] font-bold text-danger uppercase tracking-widest">Error Rate</span>
+                            </div>
+                            <p class="text-2xl font-black" :class="(dashboardStats?.overview?.avg_error_rate || 0) > 10 ? 'text-danger' : 'text-slate-900'" x-text="(dashboardStats?.overview?.avg_error_rate || 0).toFixed(1) + '%'"></p>
+                            <p class="text-xs text-slate-500 mt-1">평균 오류율</p>
+                        </div>
+                        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-1">
+                            <div class="flex items-center justify-between mb-4">
+                                <div class="w-10 h-10 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center"><i class="ph ph-target text-xl"></i></div>
+                                <span class="text-[10px] font-bold text-amber-600 uppercase tracking-widest">Top Rule</span>
+                            </div>
+                            <p class="text-lg font-black text-slate-900 truncate" x-text="dashboardStats?.top_error_rules?.[0]?.sample_msg?.substring(0, 20) || '-'"></p>
+                            <p class="text-xs text-slate-500 mt-1">가장 빈번한 오류 규칙</p>
+                        </div>
+                    </div>
+
+                    <!-- Charts Row -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                        <!-- Error Trend Chart -->
+                        <div class="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
+                            <h3 class="font-bold text-slate-900 mb-6 flex items-center gap-2">
+                                <i class="ph ph-trend-up text-primary"></i> 검증 오류 추이
+                            </h3>
+                            <div class="h-64 relative">
+                                <canvas id="statsErrorTrendChart"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Top Error Rules Chart -->
+                        <div class="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
+                            <h3 class="font-bold text-slate-900 mb-6 flex items-center gap-2">
+                                <i class="ph ph-ranking text-danger"></i> 오류 빈도 Top 10 규칙
+                            </h3>
+                            <div class="h-64 relative">
+                                <canvas id="statsTopRulesChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Top Error Rules Table -->
+                    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+                            <h3 class="font-bold text-slate-900 flex items-center gap-2">
+                                <i class="ph ph-list-numbers text-primary"></i> 규칙별 상세 통계
+                            </h3>
+                        </div>
+                        <template x-if="dashboardStats?.top_error_rules?.length > 0">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="bg-slate-50 text-slate-500 text-[10px] font-black uppercase tracking-widest border-b border-slate-200">
+                                        <th class="px-6 py-4 w-16">순위</th>
+                                        <th class="px-6 py-4">오류 메시지</th>
+                                        <th class="px-6 py-4 w-28 text-center">발생 횟수</th>
+                                        <th class="px-6 py-4 w-28 text-center">오진 횟수</th>
+                                        <th class="px-6 py-4 w-28 text-center">정확도</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-100">
+                                    <template x-for="(rule, idx) in dashboardStats.top_error_rules" :key="idx">
+                                        <tr class="hover:bg-slate-50/50 transition-colors">
+                                            <td class="px-6 py-4 text-sm font-bold text-slate-400" x-text="idx + 1"></td>
+                                            <td class="px-6 py-4 text-sm text-slate-700 truncate max-w-[400px]" x-text="rule.sample_msg"></td>
+                                            <td class="px-6 py-4 text-center">
+                                                <span class="text-sm font-bold text-danger" x-text="rule.count"></span>
+                                            </td>
+                                            <td class="px-6 py-4 text-center">
+                                                <span class="text-sm font-bold" :class="rule.fp_count > 0 ? 'text-amber-600' : 'text-slate-400'" x-text="rule.fp_count || 0"></span>
+                                            </td>
+                                            <td class="px-6 py-4 text-center">
+                                                <div class="flex flex-col items-center gap-1">
+                                                    <div class="w-16 bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                                                        <div :class="(rule.accuracy_score || 100) >= 80 ? 'bg-success' : 'bg-warning'" class="h-full transition-all" :style="'width: ' + (rule.accuracy_score || 100) + '%'"></div>
+                                                    </div>
+                                                    <span class="text-[10px] font-bold text-slate-400" x-text="(rule.accuracy_score || 100) + '%'"></span>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </template>
+                        <template x-if="!dashboardStats?.top_error_rules?.length">
+                            <div class="p-12 text-center text-slate-400">
+                                <i class="ph ph-chart-bar text-4xl mb-3"></i>
+                                <p class="text-sm font-medium">아직 통계 데이터가 없습니다.</p>
+                                <p class="text-xs mt-1">검증을 실행하면 통계가 자동으로 수집됩니다.</p>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- 9. SETTINGS VIEW -->
+                <div x-show="currentTab === 'settings'" x-init="loadSettings()" class="max-w-3xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <div>
+                        <h2 class="text-2xl font-bold text-slate-900">시스템 설정</h2>
+                        <p class="text-slate-500 mt-1">AI 모델 프로바이더, 기능 플래그, 시스템 동작을 설정합니다.</p>
+                    </div>
+
+                    <!-- AI Provider Selection -->
+                    <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-6">
+                        <div class="flex items-start gap-4">
+                            <div class="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                                <i class="ph ph-robot text-2xl"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-slate-900">AI 모델 프로바이더</h3>
+                                <p class="text-xs text-slate-500 mt-0.5">규칙 해석, 오류 분석, 자연어 처리에 사용할 AI 프로바이더를 선택하세요.</p>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-4">
+                            <template x-for="provider in [
+                                { id: 'local-parser', name: '로컬 파서', desc: '정규식 기반, API 불필요', icon: 'ph-desktop-tower', color: 'bg-slate-100 text-slate-600' },
+                                { id: 'openai', name: 'OpenAI (GPT)', desc: 'GPT-4o 모델 사용', icon: 'ph-open-ai-logo', color: 'bg-emerald-50 text-emerald-600' },
+                                { id: 'anthropic', name: 'Anthropic (Claude)', desc: 'Claude Sonnet 모델', icon: 'ph-brain', color: 'bg-amber-50 text-amber-600' },
+                                { id: 'gemini', name: 'Google Gemini', desc: 'Gemini Pro 모델', icon: 'ph-google-logo', color: 'bg-blue-50 text-blue-600' }
+                            ]" :key="provider.id">
+                                <label class="relative flex items-center p-4 rounded-xl border-2 transition-all cursor-pointer group"
+                                       :class="aiProvider === provider.id ? 'border-primary bg-primary/5' : 'border-slate-100 hover:border-slate-300'">
+                                    <input type="radio" name="aiProviderSelect" :value="provider.id" x-model="aiProvider" @change="saveSettings()" class="hidden">
+                                    <div class="flex-1 flex items-center gap-3">
+                                        <div class="w-10 h-10 rounded-lg flex items-center justify-center transition-colors shadow-sm" :class="provider.color">
+                                            <i :class="'ph ' + provider.icon" class="text-2xl"></i>
+                                        </div>
+                                        <div>
+                                            <p class="text-sm font-bold text-slate-900" x-text="provider.name"></p>
+                                            <p class="text-[10px] text-slate-500" x-text="provider.desc"></p>
+                                        </div>
+                                    </div>
+                                    <div x-show="aiProvider === provider.id" class="text-primary animate-in zoom-in duration-300">
+                                        <i class="ph-fill ph-check-circle text-2xl"></i>
+                                    </div>
+                                </label>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- Feature Toggles -->
+                    <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-6">
+                        <div class="flex items-start gap-4">
+                            <div class="w-10 h-10 rounded-xl bg-purple-100 text-purple-600 flex items-center justify-center shrink-0">
+                                <i class="ph ph-toggle-right text-2xl"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-slate-900">기능 설정</h3>
+                                <p class="text-xs text-slate-500 mt-0.5">시스템 동작 방식을 커스터마이징합니다.</p>
+                            </div>
+                        </div>
+
+                        <div class="space-y-4">
+                            <div class="flex items-center justify-between p-4 bg-slate-50 rounded-xl">
+                                <div>
+                                    <p class="text-sm font-bold text-slate-900">AI 해석 캐싱</p>
+                                    <p class="text-xs text-slate-500">동일 규칙의 AI 해석 결과를 캐싱하여 비용과 시간을 절약합니다.</p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" x-model="settingsCache" @change="saveSettings()" class="sr-only peer">
+                                    <div class="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                                </label>
+                            </div>
+                            <div class="flex items-center justify-between p-4 bg-slate-50 rounded-xl">
+                                <div>
+                                    <p class="text-sm font-bold text-slate-900">학습 데이터 수집</p>
+                                    <p class="text-xs text-slate-500">사용자 피드백과 수정 이력을 수집하여 AI 정확도를 향상시킵니다.</p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" x-model="settingsLearning" @change="saveSettings()" class="sr-only peer">
+                                    <div class="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                                </label>
+                            </div>
+                            <div class="flex items-center justify-between p-4 bg-slate-50 rounded-xl">
+                                <div>
+                                    <p class="text-sm font-bold text-slate-900">파일 업로드 시 자동 검증</p>
+                                    <p class="text-xs text-slate-500">규칙이 선택된 상태에서 파일을 업로드하면 즉시 검증을 시작합니다.</p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" x-model="settingsAutoValidate" @change="saveSettings()" class="sr-only peer">
+                                    <div class="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- System Info -->
+                    <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+                        <div class="flex items-start gap-4">
+                            <div class="w-10 h-10 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center shrink-0">
+                                <i class="ph ph-info text-2xl"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-slate-900">시스템 정보</h3>
+                                <p class="text-xs text-slate-500 mt-0.5">현재 시스템 구성 정보입니다.</p>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="p-3 bg-slate-50 rounded-xl">
+                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Frontend</p>
+                                <p class="text-sm font-bold text-slate-900" x-text="frontendVersion"></p>
+                            </div>
+                            <div class="p-3 bg-slate-50 rounded-xl">
+                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Backend</p>
+                                <p class="text-sm font-bold text-slate-900" x-text="backendVersion"></p>
+                            </div>
+                            <div class="p-3 bg-slate-50 rounded-xl">
+                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">AI Provider</p>
+                                <p class="text-sm font-bold text-slate-900" x-text="aiProvider"></p>
+                            </div>
+                            <div class="p-3 bg-slate-50 rounded-xl">
+                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">DB Status</p>
+                                <p class="text-sm font-bold text-success">Connected</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 10. REFERENCE VIEW -->
+                <div x-show="currentTab === 'reference'" class="max-w-4xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <div>
+                        <h2 class="text-2xl font-bold text-slate-900">K-IFRS 1019 참고 자료</h2>
+                        <p class="text-slate-500 mt-1">확정급여채무(DBO) 검증에 필요한 K-IFRS 1019 핵심 조항과 가이드를 제공합니다.</p>
+                    </div>
+
+                    <!-- DBO Formula Card -->
+                    <div class="bg-gradient-to-br from-slate-900 to-slate-800 rounded-3xl p-8 text-white shadow-xl">
+                        <div class="flex items-center gap-3 mb-6">
+                            <div class="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center">
+                                <i class="ph ph-math-operations text-2xl"></i>
+                            </div>
+                            <h3 class="text-lg font-bold">확정급여채무(DBO) 산출 공식</h3>
+                        </div>
+                        <div class="bg-white/5 rounded-2xl p-6 font-mono text-sm leading-relaxed space-y-2 border border-white/10">
+                            <p>DBO = Sum[ PV( B(x,t) x q(x,t) x v^(t) ) ]</p>
+                            <p class="text-slate-400 text-xs mt-4">B(x,t): 연령 x, 근속 t에서의 예상 급여</p>
+                            <p class="text-slate-400 text-xs">q(x,t): 퇴직 확률 (사망/퇴직/정년)</p>
+                            <p class="text-slate-400 text-xs">v^(t): 할인 계수 = 1 / (1+r)^t</p>
+                            <p class="text-slate-400 text-xs">r: 할인율 (우량 회사채 수익률)</p>
+                        </div>
+                    </div>
+
+                    <!-- Accordion: Key Articles -->
+                    <div class="space-y-3">
+                        <h3 class="text-lg font-bold text-slate-900 flex items-center gap-2 px-2">
+                            <i class="ph ph-book-open text-primary"></i> 핵심 조항 해설
+                        </h3>
+
+                        <!-- Article 73 -->
+                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden" x-data="{ open: false }">
+                            <button @click="open = !open" class="w-full flex items-center justify-between p-5 hover:bg-slate-50 transition-colors">
+                                <div class="flex items-center gap-3">
+                                    <span class="px-2 py-1 bg-primary/10 text-primary text-[10px] font-black rounded">제73항</span>
+                                    <span class="text-sm font-bold text-slate-900">확정급여채무의 현재가치 측정</span>
+                                </div>
+                                <i class="ph ph-caret-down text-slate-400 transition-transform duration-300" :class="open ? 'rotate-180' : ''"></i>
+                            </button>
+                            <div x-show="open" x-collapse class="px-5 pb-5 text-sm text-slate-600 leading-relaxed border-t border-slate-100 pt-4">
+                                <p>확정급여채무의 현재가치와 관련 당기근무원가를 결정하기 위해 <strong>예측단위적립방식(Projected Unit Credit Method)</strong>을 사용합니다.</p>
+                                <ul class="mt-3 space-y-2 list-disc list-inside text-slate-500">
+                                    <li>미래 급여 수준의 추정치를 반영하여 채무를 측정</li>
+                                    <li>각 근무기간에 급여의 일정 단위를 배분</li>
+                                    <li>각 단위를 개별적으로 측정하여 최종 채무 산출</li>
+                                </ul>
+                                <div class="mt-4 p-3 bg-primary/5 rounded-xl text-xs text-primary font-medium">
+                                    <i class="ph ph-lightbulb mr-1"></i> 검증 포인트: 예측단위적립방식 적용 여부, 미래 급여 추정 반영 확인
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Article 83 -->
+                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden" x-data="{ open: false }">
+                            <button @click="open = !open" class="w-full flex items-center justify-between p-5 hover:bg-slate-50 transition-colors">
+                                <div class="flex items-center gap-3">
+                                    <span class="px-2 py-1 bg-primary/10 text-primary text-[10px] font-black rounded">제83항</span>
+                                    <span class="text-sm font-bold text-slate-900">보험수리적 가정의 상호 일관성</span>
+                                </div>
+                                <i class="ph ph-caret-down text-slate-400 transition-transform duration-300" :class="open ? 'rotate-180' : ''"></i>
+                            </button>
+                            <div x-show="open" x-collapse class="px-5 pb-5 text-sm text-slate-600 leading-relaxed border-t border-slate-100 pt-4">
+                                <p>보험수리적 가정은 <strong>편의가 없고, 상호 일관성</strong>이 있어야 합니다.</p>
+                                <ul class="mt-3 space-y-2 list-disc list-inside text-slate-500">
+                                    <li>인구통계적 가정: 사망률, 퇴직률, 장애 발생률, 조기퇴직 비율</li>
+                                    <li>재무적 가정: 할인율, 미래급여 수준, 의료비 증가율</li>
+                                    <li>가정 간 경제적 관계 반영 (인플레이션 → 급여상승률, 할인율)</li>
+                                </ul>
+                                <div class="mt-4 p-3 bg-amber-50 rounded-xl text-xs text-amber-700 font-medium">
+                                    <i class="ph ph-warning mr-1"></i> 검증 포인트: 할인율과 급여상승률 간 일관성, 가정값의 편의 여부
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Article 86 -->
+                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden" x-data="{ open: false }">
+                            <button @click="open = !open" class="w-full flex items-center justify-between p-5 hover:bg-slate-50 transition-colors">
+                                <div class="flex items-center gap-3">
+                                    <span class="px-2 py-1 bg-primary/10 text-primary text-[10px] font-black rounded">제86항</span>
+                                    <span class="text-sm font-bold text-slate-900">할인율 결정 기준</span>
+                                </div>
+                                <i class="ph ph-caret-down text-slate-400 transition-transform duration-300" :class="open ? 'rotate-180' : ''"></i>
+                            </button>
+                            <div x-show="open" x-collapse class="px-5 pb-5 text-sm text-slate-600 leading-relaxed border-t border-slate-100 pt-4">
+                                <p>할인율은 보고기간 말 현재 <strong>우량 회사채의 시장수익률</strong>을 참조하여 결정합니다.</p>
+                                <ul class="mt-3 space-y-2 list-disc list-inside text-slate-500">
+                                    <li>해당 통화로 표시된 우량 회사채의 시장수익률 기준</li>
+                                    <li>채무의 예상 지급 시기와 통화를 일치시켜야 함</li>
+                                    <li>우량 회사채 시장이 충분하지 않은 경우 국채 수익률 사용</li>
+                                </ul>
+                                <div class="mt-4 p-3 bg-primary/5 rounded-xl text-xs text-primary font-medium">
+                                    <i class="ph ph-lightbulb mr-1"></i> 검증 포인트: 할인율 범위 (보통 3~6%), 국채 대비 적정 스프레드
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Article 87-88 -->
+                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden" x-data="{ open: false }">
+                            <button @click="open = !open" class="w-full flex items-center justify-between p-5 hover:bg-slate-50 transition-colors">
+                                <div class="flex items-center gap-3">
+                                    <span class="px-2 py-1 bg-primary/10 text-primary text-[10px] font-black rounded">제87-88항</span>
+                                    <span class="text-sm font-bold text-slate-900">급여상승률 가정</span>
+                                </div>
+                                <i class="ph ph-caret-down text-slate-400 transition-transform duration-300" :class="open ? 'rotate-180' : ''"></i>
+                            </button>
+                            <div x-show="open" x-collapse class="px-5 pb-5 text-sm text-slate-600 leading-relaxed border-t border-slate-100 pt-4">
+                                <p>미래 급여 수준 추정에는 다음 요소를 반영합니다:</p>
+                                <ul class="mt-3 space-y-2 list-disc list-inside text-slate-500">
+                                    <li>인플레이션, 근속연수, 승진, 기타 관련 요소</li>
+                                    <li>제도의 공식적/의제적 조건에 따른 급여 수준</li>
+                                    <li>급여 한도를 초과하는 경우 한도 금액 적용</li>
+                                    <li>과거 실적과 미래 전망의 균형</li>
+                                </ul>
+                                <div class="mt-4 p-3 bg-primary/5 rounded-xl text-xs text-primary font-medium">
+                                    <i class="ph ph-lightbulb mr-1"></i> 검증 포인트: 급여상승률 범위 (보통 2~7%), 최근 3년 실적 대비 합리성
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Required Data Fields -->
+                    <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-6">
+                        <div class="flex items-start gap-4">
+                            <div class="w-10 h-10 rounded-xl bg-success/10 text-success flex items-center justify-center shrink-0">
+                                <i class="ph ph-list-checks text-2xl"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-slate-900">DBO 산출 필수 데이터 필드</h3>
+                                <p class="text-xs text-slate-500 mt-0.5">확정급여채무 계산을 위해 반드시 포함되어야 하는 필드 목록입니다.</p>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <template x-for="field in [
+                                { name: '사번(직원ID)', required: true, desc: '고유 식별자, 중복 불가' },
+                                { name: '성명', required: true, desc: '직원 이름' },
+                                { name: '생년월일', required: true, desc: 'YYYYMMDD 형식' },
+                                { name: '성별', required: true, desc: '1(남) / 2(여) 코드' },
+                                { name: '입사일', required: true, desc: 'YYYYMMDD 형식' },
+                                { name: '퇴사일', required: false, desc: '퇴직자만 해당' },
+                                { name: '재직구분', required: true, desc: '재직/퇴직/휴직 등' },
+                                { name: '기본급(월급여)', required: true, desc: '숫자, 콤마 없이' },
+                                { name: '직급/직위', required: false, desc: '급여상승률 추정 참고' },
+                                { name: '부서', required: false, desc: '통계 분석 참고' }
+                            ]" :key="field.name">
+                                <div class="flex items-center gap-3 p-3 rounded-xl" :class="field.required ? 'bg-primary/5 border border-primary/10' : 'bg-slate-50'">
+                                    <div class="w-6 h-6 rounded-full flex items-center justify-center shrink-0" :class="field.required ? 'bg-primary text-white' : 'bg-slate-200 text-slate-400'">
+                                        <i class="ph text-xs" :class="field.required ? 'ph-check-bold' : 'ph-minus'"></i>
+                                    </div>
+                                    <div class="flex-1 min-w-0">
+                                        <p class="text-sm font-bold text-slate-900" x-text="field.name"></p>
+                                        <p class="text-[10px] text-slate-500" x-text="field.desc + (field.required ? ' (필수)' : ' (선택)')"></p>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 11. REPORT VIEW -->
+                <div x-show="currentTab === 'report'" x-init="loadSessionHistory()" class="max-w-7xl mx-auto space-y-8 animate-in fade-in duration-500">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h2 class="text-2xl font-bold text-slate-900">상세 리포트</h2>
+                            <p class="text-slate-500 mt-1">과거 검증 세션 이력을 조회하고 상세 결과를 확인합니다.</p>
+                        </div>
+                        <button @click="loadSessionHistory()" class="bg-white hover:bg-slate-50 text-slate-700 px-5 py-2.5 rounded-xl text-sm font-bold border border-slate-200 transition-all flex items-center gap-2 shadow-sm">
+                            <i class="ph ph-arrows-clockwise text-lg"></i> 새로고침
+                        </button>
+                    </div>
+
+                    <!-- Session History Table -->
+                    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                        <template x-if="sessionHistory?.length > 0">
+                            <div>
+                                <table class="w-full text-left border-collapse">
+                                    <thead>
+                                        <tr class="bg-slate-50 text-slate-500 text-[10px] font-black uppercase tracking-widest border-b border-slate-200">
+                                            <th class="px-6 py-4 w-16">No.</th>
+                                            <th class="px-6 py-4">검증 파일</th>
+                                            <th class="px-6 py-4 w-28 text-center">총 행수</th>
+                                            <th class="px-6 py-4 w-28 text-center">오류 수</th>
+                                            <th class="px-6 py-4 w-28 text-center">오류율</th>
+                                            <th class="px-6 py-4 w-32 text-center">상태</th>
+                                            <th class="px-6 py-4 w-40">검증 일시</th>
+                                            <th class="px-6 py-4 w-24 text-center">상세</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-100">
+                                        <template x-for="(session, idx) in sessionHistory" :key="session.id">
+                                            <tr class="hover:bg-slate-50/50 transition-colors">
+                                                <td class="px-6 py-4 text-xs text-slate-400 font-medium" x-text="idx + 1"></td>
+                                                <td class="px-6 py-4">
+                                                    <p class="text-sm font-bold text-slate-900 truncate max-w-[200px]" x-text="session.file_name || session.id?.substring(0, 8)"></p>
+                                                </td>
+                                                <td class="px-6 py-4 text-center text-sm font-bold text-slate-900" x-text="(session.total_rows || 0).toLocaleString()"></td>
+                                                <td class="px-6 py-4 text-center">
+                                                    <span class="text-sm font-bold" :class="session.total_errors > 0 ? 'text-danger' : 'text-success'" x-text="(session.total_errors || 0).toLocaleString()"></span>
+                                                </td>
+                                                <td class="px-6 py-4 text-center">
+                                                    <span class="text-xs font-bold px-2 py-1 rounded-md"
+                                                          :class="(session.total_rows > 0 ? (session.total_errors / session.total_rows * 100) : 0) > 10 ? 'bg-danger/10 text-danger' : 'bg-success/10 text-success'"
+                                                          x-text="(session.total_rows > 0 ? (session.total_errors / session.total_rows * 100).toFixed(1) : '0.0') + '%'"></span>
+                                                </td>
+                                                <td class="px-6 py-4 text-center">
+                                                    <span class="text-[10px] font-black px-2 py-1 rounded-md uppercase"
+                                                          :class="{
+                                                              'bg-success/10 text-success': session.validation_status === 'completed',
+                                                              'bg-amber-100 text-amber-700': session.validation_status === 'in_progress',
+                                                              'bg-danger/10 text-danger': session.validation_status === 'failed'
+                                                          }"
+                                                          x-text="session.validation_status || 'unknown'"></span>
+                                                </td>
+                                                <td class="px-6 py-4 text-xs text-slate-500" x-text="session.created_at ? new Date(session.created_at).toLocaleString() : '-'"></td>
+                                                <td class="px-6 py-4 text-center">
+                                                    <button @click="viewSessionDetail(session.id)" class="p-2 text-slate-400 hover:text-primary hover:bg-primary/5 rounded-lg transition-all" title="상세 보기">
+                                                        <i class="ph ph-eye text-lg"></i>
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </template>
+                        <template x-if="!sessionHistory?.length">
+                            <div class="p-16 text-center">
+                                <div class="w-20 h-20 bg-slate-50 text-slate-200 rounded-full flex items-center justify-center mx-auto mb-6">
+                                    <i class="ph ph-table text-4xl"></i>
+                                </div>
+                                <h3 class="text-lg font-bold text-slate-900">검증 이력이 없습니다</h3>
+                                <p class="text-slate-500 mt-2 text-sm">파일을 업로드하고 검증을 실행하면 이력이 기록됩니다.</p>
+                                <button @click="currentTab = 'upload'" class="mt-6 text-primary font-bold hover:underline underline-offset-4 text-sm">파일 업로드하러 가기 &rarr;</button>
+                            </div>
+                        </template>
+                    </div>
+
+                    <!-- Session Detail Modal (inline expand) -->
+                    <template x-if="selectedSessionDetail">
+                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                            <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                                <h3 class="font-bold text-slate-900 flex items-center gap-2">
+                                    <i class="ph ph-file-magnifying-glass text-primary"></i>
+                                    세션 상세: <span class="text-primary" x-text="selectedSessionDetail.session?.id?.substring(0, 8)"></span>
+                                </h3>
+                                <button @click="selectedSessionDetail = null" class="p-2 text-slate-400 hover:text-slate-600 rounded-lg transition-all">
+                                    <i class="ph ph-x text-lg"></i>
+                                </button>
+                            </div>
+                            <div class="p-6 space-y-4">
+                                <div class="grid grid-cols-4 gap-4">
+                                    <div class="p-3 bg-slate-50 rounded-xl text-center">
+                                        <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Rows</p>
+                                        <p class="text-lg font-black text-slate-900" x-text="(selectedSessionDetail.session?.total_rows || 0).toLocaleString()"></p>
+                                    </div>
+                                    <div class="p-3 bg-slate-50 rounded-xl text-center">
+                                        <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Errors</p>
+                                        <p class="text-lg font-black text-danger" x-text="(selectedSessionDetail.session?.total_errors || 0).toLocaleString()"></p>
+                                    </div>
+                                    <div class="p-3 bg-slate-50 rounded-xl text-center">
+                                        <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Error Rate</p>
+                                        <p class="text-lg font-black text-slate-900" x-text="((selectedSessionDetail.session?.total_rows > 0 ? (selectedSessionDetail.session.total_errors / selectedSessionDetail.session.total_rows * 100) : 0).toFixed(1)) + '%'"></p>
+                                    </div>
+                                    <div class="p-3 bg-slate-50 rounded-xl text-center">
+                                        <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Status</p>
+                                        <p class="text-lg font-black text-success" x-text="selectedSessionDetail.session?.validation_status || '-'"></p>
+                                    </div>
+                                </div>
+                                <template x-if="selectedSessionDetail.errors?.length > 0">
+                                    <div>
+                                        <h4 class="text-sm font-bold text-slate-900 mb-3">오류 목록 (최근 50건)</h4>
+                                        <div class="max-h-80 overflow-y-auto custom-scrollbar">
+                                            <table class="w-full text-left text-xs border-collapse">
+                                                <thead class="sticky top-0 bg-slate-50">
+                                                    <tr class="text-slate-400 font-bold uppercase tracking-wider border-b border-slate-200">
+                                                        <th class="px-4 py-2">시트</th>
+                                                        <th class="px-4 py-2">행</th>
+                                                        <th class="px-4 py-2">컬럼</th>
+                                                        <th class="px-4 py-2">오류 메시지</th>
+                                                        <th class="px-4 py-2">값</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody class="divide-y divide-slate-100">
+                                                    <template x-for="(err, i) in selectedSessionDetail.errors.slice(0, 50)" :key="i">
+                                                        <tr class="hover:bg-slate-50/50">
+                                                            <td class="px-4 py-2 text-slate-600" x-text="err.sheet || '-'"></td>
+                                                            <td class="px-4 py-2 text-slate-600 font-mono" x-text="err.row"></td>
+                                                            <td class="px-4 py-2 font-bold text-slate-900" x-text="err.column"></td>
+                                                            <td class="px-4 py-2 text-slate-600 max-w-[300px] truncate" x-text="err.message || err.error_message"></td>
+                                                            <td class="px-4 py-2 text-danger font-mono" x-text="err.actual_value || '-'"></td>
                                                         </tr>
                                                     </template>
                                                 </tbody>

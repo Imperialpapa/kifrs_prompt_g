@@ -14,8 +14,11 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 
 from database.rule_repository import RuleRepository
-from utils.excel_parser import parse_rules_from_excel
+from utils.excel_parser import parse_rules_from_excel, _split_composite_rule_text
 from models import RuleFileUpload, RuleFileResponse, RuleCreate
+from utils.logger import get_logger
+
+logger = get_logger("rule_service")
 
 
 class RuleService:
@@ -36,7 +39,7 @@ class RuleService:
         """
         규칙 파일을 업로드하고 해석함 (Smart Interpret 및 엑셀 내 기해석 정보 활용)
         """
-        print(f"[RuleService] Starting upload for file: {metadata.file_name}")
+        logger.info(f" Starting upload for file: {metadata.file_name}")
 
         try:
             # Step 1: Parse Excel file
@@ -150,7 +153,7 @@ class RuleService:
             )
 
         except Exception as e:
-            print(f"[RuleService] Upload failed: {e}")
+            logger.info(f" Upload failed: {e}")
             raise Exception(f"Failed to upload rule file: {e}")
 
     async def export_rules_to_excel(self, file_id: str) -> bytes:
@@ -302,6 +305,85 @@ class RuleService:
                 {"value": "composite", "label": "복합 검증 (composite)"},
                 {"value": "custom", "label": "사용자 정의 (custom)"}
             ]
+        }
+
+    async def split_rule(self, rule_id: str) -> Dict[str, Any]:
+        """
+        복합 규칙을 개별 규칙으로 분리
+
+        Args:
+            rule_id: 분리할 규칙의 UUID
+
+        Returns:
+            Dict with created_count and created_rules list
+        """
+        rule = await self.repository.get_rule(UUID(rule_id))
+        if not rule:
+            raise Exception(f"Rule not found: {rule_id}")
+
+        rule_text = rule.get('rule_text', '')
+        parts = _split_composite_rule_text(rule_text)
+
+        if len(parts) <= 1:
+            raise Exception(f"규칙을 분리할 수 없습니다 (단일 규칙): {rule_text}")
+
+        created_rules = []
+        for idx, part_text in enumerate(parts, start=1):
+            # AI 해석 수행
+            ai_rule_type = None
+            ai_parameters = None
+            ai_summary = None
+            ai_error = None
+            ai_confidence = None
+            ai_model = None
+            ai_rule_id = None
+
+            if self.ai_cache_service:
+                interpreted, source = await self.ai_cache_service.smart_interpret_single(
+                    part_text, rule.get('field_name', '')
+                )
+                ai_rule_id = interpreted.get('rule_id', f"RULE_{uuid4().hex[:8]}")
+                ai_rule_type = interpreted.get('rule_type')
+                ai_parameters = interpreted.get('parameters')
+                ai_summary = interpreted.get('interpretation_summary')
+                ai_error = interpreted.get('error_message')
+                ai_confidence = float(interpreted.get('confidence_score', 0.8))
+                ai_model = f"smart-{source}"
+
+            new_rule_data = {
+                "rule_file_id": str(rule.get('rule_file_id')),
+                "sheet_name": rule.get('sheet_name', 'Common'),
+                "row_number": f"{rule.get('row_number', '0')}.{idx}",
+                "column_letter": rule.get('column_letter', ''),
+                "field_name": rule.get('field_name', ''),
+                "rule_text": part_text,
+                "condition": rule.get('condition', ''),
+                "note": rule.get('note', ''),
+                "is_active": True,
+                "is_common": rule.get('is_common', False),
+                "ai_rule_id": ai_rule_id,
+                "ai_rule_type": ai_rule_type,
+                "ai_parameters": ai_parameters,
+                "ai_error_message": ai_error,
+                "ai_interpretation_summary": ai_summary,
+                "ai_confidence_score": ai_confidence,
+                "ai_model_version": ai_model,
+            }
+            result = await self.repository.create_single_rule(new_rule_data)
+            created_rules.append({
+                "id": str(result.get('id')),
+                "rule_text": part_text,
+                "ai_rule_type": ai_rule_type,
+                "ai_confidence_score": ai_confidence,
+            })
+
+        # 원본 규칙 비활성화
+        await self.repository.deactivate_rule(UUID(rule_id))
+
+        logger.info(f"Split rule {rule_id} into {len(created_rules)} individual rules")
+        return {
+            "created_count": len(created_rules),
+            "created_rules": created_rules,
         }
 
     async def reinterpret_rules(self, file_id: str, use_local_parser: bool = True) -> Dict[str, Any]:

@@ -60,8 +60,10 @@ def _is_simple_value_list(text: str) -> bool:
 
     # Check if it's a simple short value list (e.g., "Y, N" or "남, 여")
     # Short means each part is 1-3 characters
+    # But exclude if any part is a SPLIT_KEYWORD (e.g., "공백, 중복" is NOT a simple list)
     if len(parts) <= 5 and all(len(p) <= 3 for p in parts if p):
-        return True
+        if not any(kw in p for p in parts for kw in SPLIT_KEYWORDS):
+            return True
 
     return False
 
@@ -132,6 +134,9 @@ def _should_split_rule(rule_text: str) -> bool:
                 if keyword in part:
                     keyword_count += 1
                     break
+        # If 2+ parts contain keywords, split them (e.g., "공백, 중복" -> 2 rules)
+        if keyword_count >= 2:
+            return True
         # If keyword only appears in one part, and other parts exist, split
         if keyword_count >= 1 and len(parts) > keyword_count:
             # Additional check: other parts should be meaningful (not just whitespace or short)

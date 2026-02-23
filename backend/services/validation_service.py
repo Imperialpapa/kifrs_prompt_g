@@ -1,6 +1,9 @@
 from models import ValidationRule, ValidationResponse, ValidationError, ValidationSummary, ValidationErrorGroup
-from utils.common import convert_numpy_types, group_errors
+from utils.common import convert_numpy_types, group_errors, filter_garbage_rows
+from utils.logger import get_logger
 import numpy as np
+
+logger = get_logger("validation_service")
 from datetime import datetime
 from uuid import UUID, uuid4
 from typing import Dict, List, Any, Optional
@@ -155,14 +158,14 @@ class ValidationService:
         start_time = datetime.now()
 
         # Step 1: 규칙 로드
-        print(f"[ValidationService] Loading rules from DB: {rule_file_id}")
+        logger.info(f"Loading rules from DB: {rule_file_id}")
         validation_rules = await self.ai_cache_service.get_cached_rules_as_validation_rules(rule_file_id)
 
         # Step 1.5: AI 해석이 없으면 자동으로 실행
         if not validation_rules:
-            print(f"[ValidationService] No AI interpreted rules found. Running auto-interpretation...")
+            logger.info("No AI interpreted rules found. Running auto-interpretation...")
             interpret_result = await self.ai_cache_service.interpret_and_cache_rules(rule_file_id)
-            print(f"[ValidationService] Auto-interpretation completed: {interpret_result}")
+            logger.info(f"Auto-interpretation completed: {interpret_result}")
 
             # 다시 로드
             validation_rules = await self.ai_cache_service.get_cached_rules_as_validation_rules(rule_file_id)
@@ -176,7 +179,7 @@ class ValidationService:
             
             # 숨겨진 시트 제외
             visible_sheets = get_visible_sheet_names(employee_file_content)
-            print(f"[ValidationService] Visible sheets: {visible_sheets}")
+            logger.info(f"Visible sheets: {visible_sheets}")
             
             sheet_data_map = {}
             
@@ -192,64 +195,18 @@ class ValidationService:
             raise ValueError(f"직원 데이터 파싱 실패: {str(e)}")
 
         # Step 2.5: 유효하지 않은 행(Garbage Rows) 필터링
-        # - 핵심 정보(사번 AND 입사일)가 모두 없는 행을 주석/메모로 간주하여 제외
-        print("[ValidationService] Filtering garbage rows...")
+        logger.info("Filtering garbage rows...")
         for canonical_name, data in sheet_data_map.items():
-            df = data["df"]
-            original_len = len(df)
-            
-            # 1. 컬럼 그룹 식별 (부분 일치 허용)
-            id_keywords = ['사번', '사원번호', 'employee_id', 'emp_id', 'id', '코드', 'code']
-            date_keywords = ['입사일', '입사일자', 'hire_date', 'hire_dt']
-            
-            df_cols_lower = {str(col).lower(): col for col in df.columns}
-            
-            id_col = None
-            for kw in id_keywords:
-                for col_lower, original in df_cols_lower.items():
-                    if kw in col_lower:
-                        id_col = original
-                        break
-                if id_col: break
-                
-            date_col = None
-            for kw in date_keywords:
-                for col_lower, original in df_cols_lower.items():
-                    if kw in col_lower:
-                        date_col = original
-                        break
-                if date_col: break
-            
-            # 빈 값 체크 헬퍼 (NaN, None, 빈 문자열, 공백 모두 True)
-            def is_row_empty(series):
-                return series.astype(str).str.strip().replace(['nan', 'None', 'NaT', ''], np.nan).isna()
-
-            if id_col and date_col:
-                # 둘 다 비어있는 행 필터링
-                mask = is_row_empty(df[id_col]) & is_row_empty(df[date_col])
-                df = df[~mask]
-                print(f"  - Sheet '{data['display_name']}': Filtered garbage rows (Key: {id_col} & {date_col})")
-            elif id_col or date_col:
-                # 하나만 찾은 경우 해당 컬럼이 비어있으면 필터링
-                target_col = id_col or date_col
-                mask = is_row_empty(df[target_col])
-                df = df[~mask]
-                print(f"  - Sheet '{data['display_name']}': Filtered garbage rows (Key: {target_col})")
-            else:
-                # 키를 못 찾은 경우: 모든 컬럼에 대해 빈 값 체크하여 유효 데이터가 2개 미만이면 제거
-                # (단순 dropna는 빈 문자열을 못 잡으므로 apply 사용)
-                valid_counts = df.apply(lambda x: (~is_row_empty(x)).sum(), axis=1)
-                df = df[valid_counts >= 2]
-                print(f"  - Sheet '{data['display_name']}': Filtered garbage rows (Density Check)")
-            
-            if len(df) < original_len:
-                print(f"  -> Dropped {original_len - len(df)} garbage rows.")
-                data["df"] = df
+            original_len = len(data["df"])
+            data["df"] = filter_garbage_rows(data["df"])
+            dropped = original_len - len(data["df"])
+            if dropped > 0:
+                logger.debug(f"Sheet '{data['display_name']}': Dropped {dropped} garbage rows.")
 
         # Step 3: 필드명 기반 규칙 적용
         # 시트명 제거됨 - 모든 규칙은 해당 필드가 존재하는 모든 시트에 자동 적용됩니다.
         # 별도의 공통 규칙 확장이 필요 없음 (validate_sheets에서 필드 기반 매칭 수행)
-        print(f"[ValidationService] Applying {len(validation_rules)} field-based rules to all matching sheets")
+        logger.info(f"Applying {len(validation_rules)} field-based rules to all matching sheets")
 
         # Step 4: 공통 검증 로직 실행
         validation_res = await self.validate_sheets(sheet_data_map, validation_rules)
@@ -276,14 +233,14 @@ class ValidationService:
 
         # 2. K-IFRS 검증 실행
         if main_employee_df is not None and best_match_score >= 3: # 최소 3개 이상의 필수 컬럼이 있어야 실행
-            print(f"[ValidationService] Running K-IFRS Step 2 validation on sheet: {main_sheet_name}")
+            logger.info(f"Running K-IFRS Step 2 validation on sheet: {main_sheet_name}")
             kifrs_engine = KIFRS_RuleEngine(main_employee_df)
             
             # TODO: reconciliation_params를 외부에서 받아와야 함
             kifrs_errors = kifrs_engine.run_all_checks(reconciliation_params=None)
             
             if kifrs_errors:
-                print(f"[ValidationService] Found {len(kifrs_errors)} K-IFRS validation errors.")
+                logger.info(f"Found {len(kifrs_errors)} K-IFRS validation errors.")
                 # 에러에 시트 이름 추가
                 for error in kifrs_errors:
                     error.sheet = main_sheet_name

@@ -31,6 +31,10 @@ from uuid import UUID, uuid4
 from collections import Counter
 from difflib import SequenceMatcher
 
+from utils.logger import get_logger
+
+logger = get_logger("learning_service")
+
 
 class TFIDFCalculator:
     """
@@ -157,7 +161,7 @@ class LearningService:
         
         self._tfidf_calculator = TFIDFCalculator()  # TF-IDF 계산기
         self._tfidf_initialized = False  # 코퍼스 초기화 여부
-        print("[LearningService] Initialized")
+        logger.info("Initialized")
 
     async def _initialize_tfidf_corpus(self):
         """
@@ -177,7 +181,7 @@ class LearningService:
                 if patterns.data:
                     texts = [p.get('normalized_text', '') for p in patterns.data if p.get('normalized_text')]
                     self._tfidf_calculator.update_corpus(texts)
-                    print(f"[LearningService] TF-IDF corpus initialized with {len(texts)} patterns")
+                    logger.info(f"TF-IDF corpus initialized with {len(texts)} patterns")
             else:
                 # 인메모리 모드
                 texts = [p.get('normalized_text', '') for p in self._memory_patterns.values() if p.get('normalized_text')]
@@ -186,7 +190,7 @@ class LearningService:
 
             self._tfidf_initialized = True
         except Exception as e:
-            print(f"[LearningService] TF-IDF initialization error: {e}")
+            logger.error(f"TF-IDF initialization error: {e}")
             self._tfidf_initialized = True  # 에러나도 다시 시도 안 함
 
     # =========================================================================
@@ -307,14 +311,14 @@ class LearningService:
                         .execute()
 
                     pattern_data = {**old_pattern, **update_data}
-                    print(f"[LearningService] Updated pattern: {pattern_hash[:8]}... (usage: {update_data['usage_count']})")
+                    logger.info(f"Updated pattern: {pattern_hash[:8]}... (usage: {update_data['usage_count']})")
                 else:
                     # 새 패턴 저장
                     self.client.table('rule_patterns').insert(pattern_data).execute()
-                    print(f"[LearningService] Saved new pattern: {pattern_hash[:8]}...")
+                    logger.info(f"Saved new pattern: {pattern_hash[:8]}...")
 
             except Exception as e:
-                print(f"[LearningService] DB save error, using memory: {e}")
+                logger.error(f"DB save error, using memory: {e}")
         
         # Always update memory cache
         if pattern_hash in self._memory_patterns:
@@ -361,10 +365,10 @@ class LearningService:
                 .execute()
             
             if result.data:
-                print(f"[LearningService] Reactivated pattern: {pattern_id}")
+                logger.info(f"Reactivated pattern: {pattern_id}")
                 return True
         except Exception as e:
-            print(f"[LearningService] Reactivate error: {e}")
+            logger.error(f"Reactivate error: {e}")
         
         return False
 
@@ -431,9 +435,9 @@ class LearningService:
                     self._tfidf_calculator.update_corpus(texts)
                     self._tfidf_initialized = True
                     
-                    print(f"[LearningService] Synced {len(self._cached_pattern_list)} patterns to memory index")
+                    logger.info(f"Synced {len(self._cached_pattern_list)} patterns to memory index")
             except Exception as e:
-                print(f"[LearningService] Pattern sync error: {e}")
+                logger.error(f"Pattern sync error: {e}")
 
     async def find_matching_pattern(
         self,
@@ -463,7 +467,7 @@ class LearningService:
 
         # 1. 인메모리 캐시 우선 확인 (Exact Match)
         if pattern_hash in self._memory_patterns:
-            print(f"[LearningService] Cache hit: {pattern_hash[:8]}...")
+            logger.debug(f"Cache hit: {pattern_hash[:8]}...")
             return {
                 **self._memory_patterns[pattern_hash],
                 "match_type": "exact",
@@ -485,7 +489,7 @@ class LearningService:
                     # Cache valid pattern
                     self._memory_patterns[pattern_hash] = pattern
                     
-                    print(f"[LearningService] Exact match found (DB): {pattern['ai_rule_type']} (usage: {pattern.get('usage_count', 1)})")
+                    logger.debug(f"Exact match found (DB): {pattern['ai_rule_type']} (usage: {pattern.get('usage_count', 1)})")
                     return {
                         **pattern,
                         "match_type": "exact",
@@ -506,7 +510,7 @@ class LearningService:
                     if field_patterns.data:
                         best_match = self._find_best_match(field_patterns.data, rule_text, threshold)
                         if best_match:
-                            print(f"[LearningService] Field match found: {best_match['ai_rule_type']} (score: {best_match['match_score']:.2f})")
+                            logger.debug(f"Field match found: {best_match['ai_rule_type']} (score: {best_match['match_score']:.2f})")
                             return best_match
 
                 # 2-3. 전체 유사 패턴 검색 (인메모리 인덱스 활용)
@@ -515,11 +519,11 @@ class LearningService:
                 if self._cached_pattern_list:
                     best_match = self._find_best_match(self._cached_pattern_list, rule_text, threshold)
                     if best_match:
-                        print(f"[LearningService] Global match found (Index): {best_match['ai_rule_type']} (score: {best_match['match_score']:.2f})")
+                        logger.debug(f"Global match found (Index): {best_match['ai_rule_type']} (score: {best_match['match_score']:.2f})")
                         return best_match
 
             except Exception as e:
-                print(f"[LearningService] DB search error: {e}")
+                logger.error(f"DB search error: {e}")
 
         # 3. 유사 패턴 검색 (인메모리 fallback - DB 없을 때)
         if not self.client:
@@ -645,10 +649,10 @@ class LearningService:
                         .eq('id', pattern_id) \
                         .execute()
 
-                    print(f"[LearningService] Feedback recorded: {feedback_type} for pattern {pattern_id[:8]}...")
+                    logger.info(f"Feedback recorded: {feedback_type} for pattern {pattern_id[:8]}...")
 
             except Exception as e:
-                print(f"[LearningService] Feedback save error: {e}")
+                logger.error(f"Feedback save error: {e}")
 
         self._memory_feedback.append(feedback_data)
         return feedback_data
@@ -845,7 +849,7 @@ class LearningService:
                     stats["weekly_success_rate"] = weekly_success_rate
 
             except Exception as e:
-                print(f"[LearningService] Stats error: {e}")
+                logger.error(f"Stats error: {e}")
 
         # 인메모리 통계
         if not stats["total_patterns"] and self._memory_patterns:
@@ -1006,16 +1010,16 @@ class LearningService:
         """
         # 자동 학습 조건 체크
         if validation_success_rate < 0.95:
-            print(f"[AutoLearn] Skip: success rate {validation_success_rate:.1%} < 95%")
+            logger.debug(f"Skip: success rate {validation_success_rate:.1%} < 95%")
             return None
 
         if total_rows < 10:
-            print(f"[AutoLearn] Skip: total rows {total_rows} < 10")
+            logger.debug(f"Skip: total rows {total_rows} < 10")
             return None
 
         ai_confidence = ai_interpretation.get('confidence_score', 0)
         if ai_confidence < 0.8:
-            print(f"[AutoLearn] Skip: AI confidence {ai_confidence:.1%} < 80%")
+            logger.debug(f"Skip: AI confidence {ai_confidence:.1%} < 80%")
             return None
 
         # 조건 충족 - 자동 학습
@@ -1030,11 +1034,11 @@ class LearningService:
                 confidence_boost=0.05,  # 자동 학습은 낮은 부스트
                 source_ai_confidence=ai_confidence  # AI 신뢰도 반영
             )
-            print(f"[AutoLearn] Pattern saved: {pattern.get('pattern_hash', '')[:8]}... (success: {validation_success_rate:.1%})")
+            logger.info(f"Auto-learned pattern saved: {pattern.get('pattern_hash', '')[:8]}... (success: {validation_success_rate:.1%})")
             return pattern
 
         except Exception as e:
-            print(f"[AutoLearn] Error: {e}")
+            logger.error(f"Auto-learn error: {e}")
             return None
 
     async def deactivate_low_confidence_patterns(
@@ -1115,13 +1119,13 @@ class LearningService:
                     if pattern_hash and pattern_hash in self._memory_patterns:
                         del self._memory_patterns[pattern_hash]
 
-                    print(f"[Maintenance] Deactivated pattern: {pattern['id'][:8]}... (success: {success_rate:.1%})")
+                    logger.info(f"Deactivated pattern: {pattern['id'][:8]}... (success: {success_rate:.1%})")
 
-            print(f"[Maintenance] Deactivated {result['deactivated_count']} low-confidence patterns")
+            logger.info(f"Deactivated {result['deactivated_count']} low-confidence patterns")
             return result
 
         except Exception as e:
-            print(f"[Maintenance] Error: {e}")
+            logger.error(f"Deactivation maintenance error: {e}")
             return {"error": str(e)}
 
     async def confirm_high_success_patterns(
@@ -1202,13 +1206,13 @@ class LearningService:
                     if pattern_hash and pattern_hash in self._memory_patterns:
                         self._memory_patterns[pattern_hash]['confidence_score'] = 1.0
 
-                    print(f"[Maintenance] Confirmed pattern: {pattern['id'][:8]}... (success: {success_rate:.1%}, count: {success_count})")
+                    logger.info(f"Confirmed pattern: {pattern['id'][:8]}... (success: {success_rate:.1%}, count: {success_count})")
 
-            print(f"[Maintenance] Confirmed {result['confirmed_count']} high-success patterns")
+            logger.info(f"Confirmed {result['confirmed_count']} high-success patterns")
             return result
 
         except Exception as e:
-            print(f"[Maintenance] Error: {e}")
+            logger.error(f"Confirmation maintenance error: {e}")
             return {"error": str(e)}
 
     async def run_maintenance(self) -> Dict[str, Any]:
@@ -1221,7 +1225,7 @@ class LearningService:
         Returns:
             유지보수 결과 통계
         """
-        print("[Maintenance] Starting learning system maintenance...")
+        logger.info("Starting learning system maintenance...")
 
         deactivate_result = await self.deactivate_low_confidence_patterns()
         confirm_result = await self.confirm_high_success_patterns()

@@ -11,6 +11,9 @@ from datetime import datetime
 from database.rule_repository import RuleRepository
 from ai_layer import AIRuleInterpreter
 from models import ValidationRule, RuleSource
+from utils.logger import get_logger
+
+logger = get_logger("ai_cache_service")
 
 
 class AICacheService:
@@ -33,7 +36,7 @@ class AICacheService:
         """
         규칙 파일의 모든 규칙을 AI로 해석하고 캐싱 (Smart Interpret 적용)
         """
-        print(f"[AICacheService] Starting interpretation for file: {file_id}")
+        logger.info(f"Starting interpretation for file: {file_id}")
         start_time = datetime.now()
 
         # Step 1: 규칙 조회
@@ -139,7 +142,7 @@ class AICacheService:
                 }
                 self.repository.client.table('ai_interpretation_logs').insert(log_data).execute()
         except Exception as e:
-            print(f"[AICacheService] Logging failed: {e}")
+            logger.error(f"Logging failed: {e}")
 
     async def get_cached_rules_as_validation_rules(self, file_id: str) -> List[ValidationRule]:
         """캐시된 AI 해석을 ValidationRule 객체로 변환"""
@@ -163,7 +166,6 @@ class AICacheService:
                     error_message_template=rule.get('ai_error_message') or f"{rule.get('field_name')} 검증 실패",
                     source=RuleSource(
                         original_text=rule.get('rule_text') or "",
-                        sheet_name=rule.get('sheet_name', 'Common'),
                         row_number=str(rule.get('row_number', '0'))
                     ),
                     ai_interpretation_summary=rule.get('ai_interpretation_summary') or "자동 로드된 규칙",
@@ -171,6 +173,6 @@ class AICacheService:
                     is_common=rule.get('is_common', False)
                 ))
             except Exception as e:
-                print(f"[AICacheService] Failed to load rule {rule.get('id')}: {e}")
+                logger.error(f"Failed to load rule {rule.get('id')}: {e}")
                 continue
         return validation_rules

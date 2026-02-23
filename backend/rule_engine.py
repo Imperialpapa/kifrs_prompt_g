@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from utils.logger import get_logger
 from models import (
     ValidationRule,
     ValidationError,
@@ -35,7 +36,9 @@ class RuleEngine:
     - 오류 메시지 생성 시 필드명 자동 치환
     - 데이터 타입(숫자, 문자, 날짜)에 따른 유연한 처리
     """
-    
+
+    logger = get_logger("rule_engine")
+
     def __init__(self):
         """초기화"""
         self.errors: List[ValidationError] = []
@@ -70,7 +73,7 @@ class RuleEngine:
         """
         # 행 검증 항목(axis='row')은 향후 추가 예정이므로 현재는 열(column) 검증만 수행
         if hasattr(rule, 'validation_axis') and rule.validation_axis == "row":
-            print(f"[RuleEngine] Skipping row-based rule for now: {rule.rule_id}")
+            self.logger.debug(f"Skipping row-based rule for now: {rule.rule_id}")
             return
 
         if rule.rule_type == "required":
@@ -376,7 +379,7 @@ class RuleEngine:
 
         if not compare_field or compare_field not in data.columns:
             # 비교 대상 필드가 없으면 경고 로그만 출력
-            print(f"[RuleEngine] Warning: compare_field '{compare_field}' not found in data columns for date_logic rule on '{field}'")
+            self.logger.warning(f"compare_field '{compare_field}' not found in data columns for date_logic rule on '{field}'")
             return
 
         # 연산자 표시 맵
@@ -389,9 +392,9 @@ class RuleEngine:
             "not_equal": "<>"
         }
 
-        for idx in range(len(data)):
-            value1 = data.loc[idx, field]
-            value2 = data.loc[idx, compare_field]
+        for idx, row in data.iterrows():
+            value1 = row[field]
+            value2 = row[compare_field]
 
             if pd.isna(value1) or pd.isna(value2):
                 continue
@@ -448,7 +451,7 @@ class RuleEngine:
                     actual_value=f"{field}={str_val1}, {compare_field}={str_val2}",
                     expected=f"{field} {op_display.get(operator, operator)} {compare_field}"
                 )
-            
+
             # 최소 나이 체크 (입사 시)
             if "min_age_at_hire" in params:
                 min_age = params["min_age_at_hire"]
@@ -456,7 +459,7 @@ class RuleEngine:
                     birth_year = int(str(value2)[:4])
                     hire_year = int(str(value1)[:4])
                     age_at_hire = hire_year - birth_year
-                    
+
                     if age_at_hire < min_age:
                         self._add_error(
                             row=idx + 2,
@@ -485,10 +488,10 @@ class RuleEngine:
         if not reference_field or reference_field not in data.columns:
             return
         
-        for idx in range(len(data)):
-            value = data.loc[idx, field]
-            ref_value = data.loc[idx, reference_field]
-            
+        for idx, row in data.iterrows():
+            value = row[field]
+            ref_value = row[reference_field]
+
             if condition == "required_if_not_null":
                 if pd.notna(ref_value) and pd.isna(value):
                     self._add_error(
@@ -1081,33 +1084,94 @@ class KIFRS_RuleEngine:
 
     # (5) 이상치 탐지
     def _check_outliers(self):
-        """평균±3표준편차를 벗어나는 임금 값 탐지"""
-        if 'average_wage' in self.data.columns and self.data['average_wage'].notna().sum() > 1:
-            wages = self.data['average_wage'].dropna()
-            mean = wages.mean()
-            std = wages.std()
-            lower_bound = mean - 3 * std
-            upper_bound = mean + 3 * std
-            
-            outliers = self.data[(self.data['average_wage'] < lower_bound) | (self.data['average_wage'] > upper_bound)]
-            
+        """
+        수치 필드에 대한 이상치 탐지 (Z-score + Modified Z-score + IQR 병행)
+        평균임금, 근속연수 등 수치 필드에 자동 적용
+        """
+        import numpy as np
+
+        # 이상치 탐지 대상 컬럼 (키워드 기반)
+        numeric_keywords = {
+            'average_wage': ['평균임금', '급여', '임금', 'wage', 'salary'],
+            'service_years': ['근속연수', '근무연수', 'service_year', 'tenure'],
+            'payment_rate': ['지급배수', '지급률', 'payment_rate']
+        }
+
+        for label, keywords in numeric_keywords.items():
+            target_col = None
+            for col in self.data.columns:
+                col_lower = str(col).lower()
+                if any(kw in col_lower for kw in keywords):
+                    target_col = col
+                    break
+
+            if not target_col or self.data[target_col].notna().sum() < 5:
+                continue
+
+            numeric_data = pd.to_numeric(self.data[target_col], errors='coerce')
+            valid_data = numeric_data.dropna()
+
+            if len(valid_data) < 5:
+                continue
+
+            # Method 1: Z-score (평균±3σ)
+            mean = valid_data.mean()
+            std = valid_data.std()
+            if std > 0:
+                z_lower = mean - 3 * std
+                z_upper = mean + 3 * std
+            else:
+                z_lower = mean
+                z_upper = mean
+
+            # Method 2: Modified Z-score (MAD 기반, 더 로버스트)
+            median = valid_data.median()
+            mad = np.median(np.abs(valid_data - median))
+            if mad > 0:
+                modified_z_threshold = 3.5
+                # Modified Z-score = 0.6745 * (x - median) / MAD
+                # |Modified Z| > 3.5 이면 이상치
+                mad_lower = median - modified_z_threshold * mad / 0.6745
+                mad_upper = median + modified_z_threshold * mad / 0.6745
+            else:
+                mad_lower = median
+                mad_upper = median
+
+            # Method 3: IQR
+            q1 = valid_data.quantile(0.25)
+            q3 = valid_data.quantile(0.75)
+            iqr = q3 - q1
+            iqr_lower = q1 - 1.5 * iqr
+            iqr_upper = q3 + 1.5 * iqr
+
+            # 종합: 두 가지 이상 방법에서 이상치로 판정된 경우만 보고
+            outlier_mask = (
+                ((numeric_data < z_lower) | (numeric_data > z_upper)) &
+                ((numeric_data < iqr_lower) | (numeric_data > iqr_upper))
+            )
+
+            outliers = self.data[outlier_mask & numeric_data.notna()]
+
             if not outliers.empty:
-                # Add a summary error
                 self._add_kifrs_error(
-                    row=0, column='average_wage',
-                    message=f"{len(outliers)}개의 임금 이상치(평균±3σ)가 탐지되었습니다. (범위: [{lower_bound:,.0f} ~ {upper_bound:,.0f}])",
+                    row=0, column=str(target_col),
+                    message=(
+                        f"{len(outliers)}개의 {target_col} 이상치가 탐지되었습니다. "
+                        f"(Z-score 범위: [{z_lower:,.0f}~{z_upper:,.0f}], "
+                        f"IQR 범위: [{iqr_lower:,.0f}~{iqr_upper:,.0f}])"
+                    ),
                     actual_value=f"{len(outliers)} outliers",
-                    expected=f"In range",
-                    rule_id="KIFRS_OUTLIER_WAGE_SUMMARY"
+                    expected="Within normal range",
+                    rule_id=f"KIFRS_OUTLIER_{label.upper()}_SUMMARY"
                 )
-                # Add row-specific errors
                 for idx, row_data in outliers.iterrows():
+                    val = numeric_data.loc[idx]
                     self._add_kifrs_error(
-                        row=idx + 2, column='average_wage',
-                        message=f"평균임금 이상치(평균±3σ) 탐지됨.",
-                        actual_value=f"{row_data['average_wage']:,.0f}",
-                        expected=f"Range [{lower_bound:,.0f}, {upper_bound:,.0f}]",
-                        rule_id="KIFRS_OUTLIER_WAGE_ROW"
+                        row=idx + 2, column=str(target_col),
+                        message=f"{target_col} 이상치 탐지 (Z-score + IQR 기준).",
+                        actual_value=f"{val:,.0f}" if pd.notna(val) else "N/A",
+                        expected=f"Range [{z_lower:,.0f}, {z_upper:,.0f}]",
+                        rule_id=f"KIFRS_OUTLIER_{label.upper()}_ROW"
                     )
 
     # (6) 회계 리콘 (롤포워드)
@@ -1145,8 +1209,7 @@ if __name__ == "__main__":
             error_message_template="사번이 비어있습니다.",
             source=RuleSource(
                 original_text="사번: 공백 없음",
-                sheet_name="rules",
-                row_number=2
+                row_number="2"
             ),
             ai_interpretation_summary="사번 필수",
             confidence_score=0.99
@@ -1159,8 +1222,7 @@ if __name__ == "__main__":
             error_message_template="사번이 중복되었습니다.",
             source=RuleSource(
                 original_text="사번: 중복 없음",
-                sheet_name="rules",
-                row_number=2
+                row_number="2"
             ),
             ai_interpretation_summary="사번 고유",
             confidence_score=0.99
@@ -1173,8 +1235,7 @@ if __name__ == "__main__":
             error_message_template="생년월일 형식이 잘못되었습니다.",
             source=RuleSource(
                 original_text="생년월일: YYYYMMDD",
-                sheet_name="rules",
-                row_number=3
+                row_number="3"
             ),
             ai_interpretation_summary="날짜 형식",
             confidence_score=0.99
@@ -1187,8 +1248,7 @@ if __name__ == "__main__":
             error_message_template="성별 값이 올바르지 않습니다.",
             source=RuleSource(
                 original_text="성별: M/F/남/여",
-                sheet_name="rules",
-                row_number=4
+                row_number="4"
             ),
             ai_interpretation_summary="성별 허용값",
             confidence_score=0.99

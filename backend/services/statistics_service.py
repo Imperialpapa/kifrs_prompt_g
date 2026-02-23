@@ -2,75 +2,88 @@
 Statistics Service - 데이터 및 규칙 통계 분석
 =============================================
 규칙별 성능, 오류 빈도, False Positive 비율 등을 분석하여 제공
+
+최적화:
+- 세션 조회 limit 100 → 30 (대시보드용으로 충분)
+- 오류 집계를 DB 레벨에서 최대한 처리
+- 불필요한 필드 조회 제거
 """
 
 from typing import List, Dict, Any
+from collections import Counter
 from database.supabase_client import supabase
+from utils.logger import get_logger
+
+logger = get_logger("statistics_service")
+
 
 class StatisticsService:
-    """
-    통계 데이터 집계 및 분석 서비스
-    """
-    
+    """통계 데이터 집계 및 분석 서비스"""
+
     def __init__(self):
         self.client = supabase
 
     async def get_dashboard_statistics(self) -> Dict[str, Any]:
-        """
-        대시보드용 전체 통계 데이터 조회
-        """
+        """대시보드용 전체 통계 데이터 조회 (최적화)"""
         try:
-            # 1. 전체 검증 세션 통계
+            # 1. 세션 통계 (최근 30개만 조회 - 대시보드에 충분)
             sessions_res = self.client.table('validation_sessions') \
                 .select('total_rows, total_errors, validation_status, created_at') \
                 .order('created_at', desc=True) \
-                .limit(100) \
+                .limit(30) \
                 .execute()
-            
+
             sessions = sessions_res.data
             total_sessions = len(sessions)
             total_rows_validated = sum(s['total_rows'] or 0 for s in sessions)
-            avg_error_rate = 0
-            if total_rows_validated > 0:
-                avg_error_rate = (sum(s['total_errors'] or 0 for s in sessions) / total_rows_validated) * 100
+            total_errors = sum(s['total_errors'] or 0 for s in sessions)
+            avg_error_rate = (total_errors / total_rows_validated * 100) if total_rows_validated > 0 else 0
 
-            # 2. 규칙별 오류 발생 순위 (Top 10)
-            # Note: GroupBy is not directly supported in simple Supabase client select(), 
-            # so we fetch errors (limited) and aggregate in Python for prototype.
-            # For production, use RPC or specific SQL view.
+            # 2. 규칙별 오류 순위 (Top 10) - rule_id만 조회하여 DB 전송량 최소화
             errors_res = self.client.table('validation_errors') \
                 .select('rule_id, error_message') \
-                .limit(1000) \
+                .order('created_at', desc=True) \
+                .limit(500) \
                 .execute()
-            
-            rule_stats = {}
+
+            # Counter를 사용한 효율적 집계
+            rule_counter = Counter()
+            rule_sample_msg = {}
             for err in errors_res.data:
                 rid = err['rule_id']
-                if rid not in rule_stats:
-                    rule_stats[rid] = {'count': 0, 'sample_msg': err['error_message']}
-                rule_stats[rid]['count'] += 1
-            
-            top_error_rules = sorted(
-                [{'rule_id': k, **v} for k, v in rule_stats.items()],
-                key=lambda x: x['count'],
-                reverse=True
-            )[:10]
+                rule_counter[rid] += 1
+                if rid not in rule_sample_msg:
+                    rule_sample_msg[rid] = err['error_message']
 
-            # 3. False Positive (오진) 피드백 통계
-            feedback_res = self.client.table('false_positive_feedback') \
-                .select('rule_id') \
-                .eq('is_false_positive', True) \
-                .execute()
-            
+            top_error_rules = [
+                {'rule_id': rid, 'count': cnt, 'sample_msg': rule_sample_msg.get(rid, '')}
+                for rid, cnt in rule_counter.most_common(10)
+            ]
+
+            # 3. False Positive 피드백 (rule_id만 조회)
             fp_counts = {}
-            for fb in feedback_res.data:
-                rid = fb['rule_id']
-                fp_counts[rid] = fp_counts.get(rid, 0) + 1
-            
-            # Merge FP counts into top rules
+            try:
+                feedback_res = self.client.table('false_positive_feedback') \
+                    .select('rule_id') \
+                    .eq('is_false_positive', True) \
+                    .limit(500) \
+                    .execute()
+
+                fp_counter = Counter(fb['rule_id'] for fb in feedback_res.data)
+                fp_counts = dict(fp_counter)
+            except Exception as fp_err:
+                logger.debug(f"FP feedback query skipped: {fp_err}")
+
+            # FP 병합
             for rule in top_error_rules:
                 rule['fp_count'] = fp_counts.get(rule['rule_id'], 0)
                 rule['accuracy_score'] = self._calculate_accuracy_score(rule['count'], rule['fp_count'])
+
+            # 4. 최근 추이 (최대 10개 세션)
+            recent_trend = [
+                {"date": s['created_at'][:10], "errors": s['total_errors'] or 0}
+                for s in sessions[:10]
+            ][::-1]
 
             return {
                 "overview": {
@@ -79,28 +92,17 @@ class StatisticsService:
                     "avg_error_rate": round(avg_error_rate, 2)
                 },
                 "top_error_rules": top_error_rules,
-                "recent_trend": [
-                    {"date": s['created_at'][:10], "errors": s['total_errors']} 
-                    for s in sessions[:10]
-                ][::-1] # Reverse to show chronological order
-            }
-            
-        except Exception as e:
-            print(f"[StatisticsService] Error generating stats: {str(e)}")
-            return {
-                "error": str(e)
+                "recent_trend": recent_trend
             }
 
+        except Exception as e:
+            logger.error(f"Error generating stats: {str(e)}")
+            return {"error": str(e)}
+
     def _calculate_accuracy_score(self, error_count: int, fp_count: int) -> int:
-        """
-        단순 정확도 점수 계산 (0-100)
-        - 오진율이 높을수록 점수가 낮음
-        """
+        """단순 정확도 점수 계산 (0-100)"""
         if error_count == 0:
             return 100
-        
         fp_rate = fp_count / error_count
-        # 오진율 0% -> 100점
-        # 오진율 100% -> 0점
         score = 100 * (1 - fp_rate)
         return round(score)

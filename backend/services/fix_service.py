@@ -221,7 +221,7 @@ class FixService:
         Returns:
             bytes: 수정된 엑셀 파일
         """
-        from openpyxl.styles import PatternFill
+        from openpyxl.styles import PatternFill, Font
         from openpyxl import Workbook
 
         logger.info(f"Bulk fixing {len(cells_to_fix)} cells... (file: {filename})")
@@ -277,6 +277,7 @@ class FixService:
         # 스타일 정의 (수정된 셀 표시용)
         yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
         red_fill = PatternFill(start_color="FF6B6B", end_color="FF6B6B", fill_type="solid")
+        manual_review_font = Font(color="FF0000", bold=True)
 
         # 시트별 헤더 매핑 캐시
         header_maps = {}
@@ -331,6 +332,21 @@ class FixService:
             try:
                 cell = ws.cell(row=row, column=col_idx)
                 original_value = cell.value
+
+                # 자동 수정 가능한 fixType 목록
+                auto_fix_types = {'date_format', 'gender_code', 'number_format', 'trim'}
+
+                if fix_type not in auto_fix_types:
+                    # 수동 확인 필요: 값 변경 없이 빨간 글자로만 마킹
+                    cell.font = manual_review_font
+                    column_stats[column]['manual_review'] = column_stats[column].get('manual_review', 0) + 1
+                    if len(column_stats[column]['samples']) < 3:
+                        column_stats[column]['samples'].append({
+                            'before': str(original_value),
+                            'after': str(original_value)
+                        })
+                    continue
+
                 fixed_value = self._convert_value(original_value, fix_type, column)
 
                 if fixed_value is not None and fixed_value != original_value:
@@ -406,7 +422,6 @@ class FixService:
         for col_idx, header in enumerate(headers, start=1):
             cell = ws_log.cell(row=1, column=col_idx, value=header)
             cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-            from openpyxl.styles import Font
             cell.font = Font(color="FFFFFF", bold=True)
 
         # 데이터 작성
@@ -422,11 +437,15 @@ class FixService:
             sheets_str = ", ".join(sorted(stats['sheets']))
 
             # 상태
-            # total = stats['success'] + stats['fail'] # Unused
-            if stats['fail'] == 0:
+            manual_count = stats.get('manual_review', 0)
+            if manual_count > 0 and stats['success'] == 0 and stats['fail'] == 0:
+                status = f"🔴 수동확인 ({manual_count}건)"
+            elif stats['fail'] == 0 and manual_count == 0:
                 status = "✅ 수정완료"
-            elif stats['success'] == 0:
+            elif stats['success'] == 0 and manual_count == 0:
                 status = "❌ 수정실패"
+            elif manual_count > 0:
+                status = f"⚠️ 일부수동 ({manual_count}건 수동확인)"
             else:
                 status = f"⚠️ 일부실패 ({stats['fail']}건)"
 
@@ -435,7 +454,8 @@ class FixService:
             ws_log.cell(row=row_idx, column=3, value=before_examples)
             ws_log.cell(row=row_idx, column=4, value=after_examples)
             ws_log.cell(row=row_idx, column=5, value=sheets_str)
-            ws_log.cell(row=row_idx, column=6, value=f"{stats['success']}건")
+            count_text = f"{stats['success']}건" if manual_count == 0 else f"{stats['success']}건 (수동 {manual_count}건)"
+            ws_log.cell(row=row_idx, column=6, value=count_text)
             ws_log.cell(row=row_idx, column=7, value=status)
 
             row_idx += 1
@@ -544,6 +564,7 @@ class FixService:
             'trim': '앞뒤 공백 제거',
             'duplicate': '중복 오류 (자동수정 불가)',
             'required': '필수값 누락 (자동수정 불가)',
+            'manual_type_mismatch': '데이터 타입 불일치 (수동 확인 필요)',
             'unknown': '알 수 없는 수정 유형'
         }
         return descriptions.get(fix_type, fix_type)

@@ -704,10 +704,9 @@ function app() {
             return this.selectedFixItems.reduce((sum, key) => sum + (groups.find(e => e.key === key)?.count || 0), 0);
         },
 
-        hasFixableItems() { return this.getErrorsBySheetAndColumn().some(g => g.autoFixable); },
+        hasFixableItems() { return this.getErrorsBySheetAndColumn().length > 0; },
         isFixItemSelected(key) { return this.selectedFixItems.includes(key); },
-        toggleFixItem(key, autoFixable) {
-            if (!autoFixable) return;
+        toggleFixItem(key) {
             const idx = this.selectedFixItems.indexOf(key);
             if (idx === -1) this.selectedFixItems.push(key);
             else this.selectedFixItems.splice(idx, 1);
@@ -725,7 +724,7 @@ function app() {
 
         selectAllFixableItems() {
             const groups = this.getFilteredErrorsBySheetAndColumn();
-            const keys = groups.filter(g => g.autoFixable).map(g => g.key);
+            const keys = groups.map(g => g.key);
             this.selectedFixItems = [...new Set([...this.selectedFixItems, ...keys])];
         },
 
@@ -782,7 +781,12 @@ function app() {
         determineAutoFixability(group) {
             const msgs = Array.from(group.messages).join(' ').toLowerCase();
             const col = group.column.toLowerCase();
-            if (group.hasDatePattern) return { autoFixable: true, fixDescription: '날짜 형식 변환 (YYYY-MM-DD → YYYYMMDD)', fixType: 'date_format' };
+            const numericFieldKeywords = ['급여', '금액', '수당', '임금', '보수', '연봉', 'salary', 'wage', 'pay', 'amount'];
+            const isNumericField = numericFieldKeywords.some(k => col.includes(k));
+            if (group.hasDatePattern) {
+                if (isNumericField) return { autoFixable: false, fixDescription: '데이터 타입 불일치 (수동 확인 필요)', fixType: 'manual_type_mismatch' };
+                return { autoFixable: true, fixDescription: '날짜 형식 변환 (YYYY-MM-DD → YYYYMMDD)', fixType: 'date_format' };
+            }
             if (group.hasCommaNumber && (['숫자', 'number', '금액', 'wage', 'pay'].some(k => msgs.includes(k) || col.includes(k)))) return { autoFixable: true, fixDescription: '숫자 형식 변환 (콤마 제거)', fixType: 'number_format' };
             if (group.hasGenderText) return { autoFixable: true, fixDescription: '성별 코드 변환 (남→1, 여→2)', fixType: 'gender_code' };
             if (msgs.includes('공백')) return { autoFixable: true, fixDescription: '공백 제거', fixType: 'trim' };
@@ -797,24 +801,29 @@ function app() {
             const groups = this.getErrorsBySheetAndColumn();
             const previewItems = [];
             let successCount = 0;
+            let manualCount = 0;
             for (const error of this.results.errors) {
                 const key = `${error.sheet || '기본'}::${error.column}`;
                 if (!this.selectedFixItems.includes(key)) continue;
                 const group = groups.find(g => g.key === key);
                 const fixType = group?.fixType || 'unknown';
                 const beforeValue = error.actual_value;
+                const isManual = !group?.autoFixable;
                 const afterValue = this.simulateFixValue(beforeValue, fixType);
-                const success = afterValue !== null && afterValue !== beforeValue;
-                previewItems.push({ sheet: error.sheet || '기본', column: error.column, row: error.row, before: String(beforeValue ?? ''), after: String(afterValue ?? beforeValue ?? ''), success, fixType });
+                const success = !isManual && afterValue !== null && afterValue !== beforeValue;
+                previewItems.push({ sheet: error.sheet || '기본', column: error.column, row: error.row, before: String(beforeValue ?? ''), after: isManual ? '(수동 확인)' : String(afterValue ?? beforeValue ?? ''), success, fixType, isManual });
                 if (success) successCount++;
+                if (isManual) manualCount++;
             }
             const total = previewItems.length;
-            this.fixPreview = { total, success: successCount, fail: total - successCount, successRate: total > 0 ? Math.round((successCount / total) * 100) : 0, items: previewItems };
+            const failCount = total - successCount - manualCount;
+            this.fixPreview = { total, success: successCount, fail: failCount, manual: manualCount, successRate: total > 0 ? Math.round((successCount / total) * 100) : 0, items: previewItems };
         },
 
         simulateFixValue(value, fixType) {
             if (value == null) return null;
             const str = String(value).trim();
+            if (fixType === 'manual_type_mismatch' || fixType === 'unknown') return str;
             if (fixType === 'date_format') {
                 const m = str.match(/^(\d{4})\s*[-\/\.]\s*(\d{1,2})\s*[-\/\.]\s*(\d{1,2})/);
                 return m ? `${m[1]}${m[2].padStart(2, '0')}${m[3].padStart(2, '0')}` : null;
@@ -850,7 +859,8 @@ function app() {
         getFilteredPreviewTotal() {
             if (!this.fixPreview.items) return 0;
             if (this.fixPreviewFilter === 'success') return this.fixPreview.items.filter(i => i.success).length;
-            if (this.fixPreviewFilter === 'fail') return this.fixPreview.items.filter(i => !i.success).length;
+            if (this.fixPreviewFilter === 'fail') return this.fixPreview.items.filter(i => !i.success && !i.isManual).length;
+            if (this.fixPreviewFilter === 'manual') return this.fixPreview.items.filter(i => i.isManual).length;
             return this.fixPreview.items.length;
         },
 
@@ -858,7 +868,8 @@ function app() {
             if (!this.fixPreview.items) return [];
             let items = this.fixPreview.items;
             if (this.fixPreviewFilter === 'success') items = items.filter(i => i.success);
-            else if (this.fixPreviewFilter === 'fail') items = items.filter(i => !i.success);
+            else if (this.fixPreviewFilter === 'fail') items = items.filter(i => !i.success && !i.isManual);
+            else if (this.fixPreviewFilter === 'manual') items = items.filter(i => i.isManual);
             return this._sortPreviewItems(items).slice(0, this.fixPreviewDisplayLimit);
         },
 

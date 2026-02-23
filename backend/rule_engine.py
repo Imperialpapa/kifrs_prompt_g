@@ -323,9 +323,20 @@ class RuleEngine:
         elif "min_value" in params or "max_value" in params:
             min_val = params.get("min_value")
             max_val = params.get("max_value")
-            
+
             for idx, value in data[field].items():
                 if pd.notna(value):
+                    # 날짜/Timestamp 타입이 숫자 필드에 들어온 경우 타입 오류 처리
+                    if isinstance(value, (datetime, pd.Timestamp)):
+                        self._add_error(
+                            row=idx + 2,
+                            column=field,
+                            rule=rule,
+                            message=f"숫자가 입력되어야 할 곳에 날짜 값이 있습니다: {value}",
+                            actual_value=value,
+                            expected="숫자"
+                        )
+                        continue
                     try:
                         num_val = float(value)
                         if min_val is not None and num_val < min_val:
@@ -613,6 +624,16 @@ class RuleEngine:
 
                 # 3. Range 검증
                 elif v_type == "range":
+                    # 날짜/Timestamp 타입이 숫자 필드에 들어온 경우 타입 오류 처리
+                    if isinstance(value, (datetime, pd.Timestamp)):
+                        self._add_error(
+                            row=row_num,
+                            column=field,
+                            rule=rule,
+                            message=f"숫자가 입력되어야 할 곳에 날짜 값이 있습니다: {value}",
+                            actual_value=value
+                        )
+                        continue
                     try:
                         num_value = float(value)
                         is_valid = True
@@ -644,15 +665,14 @@ class RuleEngine:
                                 actual_value=value
                             )
                     except (ValueError, TypeError):
-                        # 숫자 변환 실패
-                        if v_params.get("numeric_only"):
-                            self._add_error(
-                                row=row_num,
-                                column=field,
-                                rule=rule,
-                                message=v_error_msg,
-                                actual_value=value
-                            )
+                        # 숫자 변환 실패 → 항상 오류로 처리
+                        self._add_error(
+                            row=row_num,
+                            column=field,
+                            rule=rule,
+                            message=v_error_msg,
+                            actual_value=value
+                        )
 
                 # 4. No Duplicates 검증은 별도 처리 필요 (행 단위가 아닌 컬럼 전체 대상)
 

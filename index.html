@@ -300,6 +300,16 @@
                                     <p class="text-2xl font-black text-primary" x-text="getErrorsBySheetAndColumn().filter(g => g.autoFixable).reduce((s, g) => s + g.count, 0).toLocaleString()"></p>
                                     <p class="text-xs text-slate-500 mt-1">AI로 즉시 교정 가능한 건수</p>
                                 </div>
+                                <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-1" x-show="getErrorsBySheetAndColumn().some(g => !g.autoFixable)">
+                                    <div class="flex items-center justify-between mb-4">
+                                        <div class="w-10 h-10 rounded-lg bg-red-100 text-red-500 flex items-center justify-center">
+                                            <i class="ph ph-warning text-xl"></i>
+                                        </div>
+                                        <span class="text-[10px] font-bold text-red-500 uppercase tracking-widest">Manual Check</span>
+                                    </div>
+                                    <p class="text-2xl font-black text-red-500" x-text="getErrorsBySheetAndColumn().filter(g => !g.autoFixable).reduce((s, g) => s + g.count, 0).toLocaleString()"></p>
+                                    <p class="text-xs text-slate-500 mt-1">수동 확인 필요 (빨간 글자 마킹)</p>
+                                </div>
                             </div>
 
                             <!-- 2. Main Workspace (Integrated Correction View) -->
@@ -364,13 +374,13 @@
                                         <!-- Correction Items Grid -->
                                         <div class="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-4">
                                             <template x-for="item in getFilteredErrorsBySheetAndColumn()" :key="item.key">
-                                                <div @click="toggleFixItem(item.key, item.autoFixable)"
+                                                <div @click="toggleFixItem(item.key)"
                                                      :class="[
                                                         isFixItemSelected(item.key) ? 'border-primary ring-1 ring-primary shadow-md' : 'border-slate-200 hover:border-slate-300 shadow-sm',
-                                                        item.autoFixable ? 'cursor-pointer bg-white' : 'opacity-75 bg-slate-50 grayscale-[0.5]'
+                                                        item.autoFixable ? 'bg-white' : 'bg-red-50/50'
                                                      ]"
-                                                     class="group relative p-5 rounded-2xl border transition-all duration-200 overflow-hidden">
-                                                    
+                                                     class="group relative cursor-pointer p-5 rounded-2xl border transition-all duration-200 overflow-hidden">
+
                                                     <!-- Check Indicator -->
                                                     <div x-show="isFixItemSelected(item.key)" class="absolute top-3 right-3 text-primary animate-in zoom-in duration-200">
                                                         <i class="ph-fill ph-check-circle text-xl"></i>
@@ -388,9 +398,9 @@
                                                                 <span class="text-2xl font-black text-slate-900" x-text="item.count"></span>
                                                                 <span class="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Errors Found</span>
                                                             </div>
-                                                            <div :class="item.autoFixable ? 'bg-success/10 text-success' : 'bg-slate-200 text-slate-500'"
+                                                            <div :class="item.autoFixable ? 'bg-success/10 text-success' : 'bg-red-100 text-red-600'"
                                                                  class="px-2 py-1 rounded-md text-[10px] font-black uppercase">
-                                                                <span x-text="item.autoFixable ? 'Auto Fixable' : 'Manual Review'"></span>
+                                                                <span x-text="item.autoFixable ? 'Auto Fixable' : '수동 확인'"></span>
                                                             </div>
                                                         </div>
 
@@ -405,8 +415,8 @@
                                                         </div>
 
                                                         <div class="pt-3 border-t border-slate-100">
-                                                            <p class="text-[10px] font-bold" :class="item.autoFixable ? 'text-primary' : 'text-slate-400'">
-                                                                <i class="ph ph-wrench mr-1"></i>
+                                                            <p class="text-[10px] font-bold" :class="item.autoFixable ? 'text-primary' : 'text-red-500'">
+                                                                <i :class="item.autoFixable ? 'ph ph-wrench mr-1' : 'ph ph-warning mr-1'"></i>
                                                                 <span x-text="item.fixDescription"></span>
                                                             </p>
                                                         </div>
@@ -444,6 +454,7 @@
                                                         <option value="all">전체 내역 보기</option>
                                                         <option value="success">성공 예상</option>
                                                         <option value="fail">확인 필요 (실패)</option>
+                                                        <option value="manual">수동 확인 필요</option>
                                                     </select>
                                                 </div>
                                             </div>
@@ -478,8 +489,8 @@
                                                                 <td class="px-6 py-4">
                                                                     <div class="flex items-center gap-2">
                                                                         <i class="ph ph-arrow-right text-slate-300"></i>
-                                                                        <span :class="item.success ? 'bg-success/5 text-success border-success/10' : 'bg-slate-100 text-slate-400 border-slate-200'"
-                                                                              class="text-xs font-mono px-2 py-1 rounded border" 
+                                                                        <span :class="item.success ? 'bg-success/5 text-success border-success/10' : (item.isManual ? 'bg-red-50 text-red-500 border-red-200' : 'bg-slate-100 text-slate-400 border-slate-200')"
+                                                                              class="text-xs font-mono px-2 py-1 rounded border"
                                                                               x-text="item.after"></span>
                                                                     </div>
                                                                 </td>
@@ -490,7 +501,12 @@
                                                                                 <i class="ph ph-check-circle text-base"></i> 교정완료
                                                                             </span>
                                                                         </template>
-                                                                        <template x-if="!item.success">
+                                                                        <template x-if="item.isManual">
+                                                                            <span class="flex items-center gap-1 text-[10px] font-black text-red-500 uppercase">
+                                                                                <i class="ph ph-warning-circle text-base"></i> 수동확인
+                                                                            </span>
+                                                                        </template>
+                                                                        <template x-if="!item.success && !item.isManual">
                                                                             <span class="flex items-center gap-1 text-[10px] font-black text-slate-400 uppercase">
                                                                                 <i class="ph ph-warning text-base"></i> 확인필요
                                                                             </span>

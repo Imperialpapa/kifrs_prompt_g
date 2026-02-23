@@ -366,13 +366,18 @@ def parse_rules_from_excel(content: bytes) -> Tuple[List[Dict[str, Any]], Dict[s
         if is_reupload:
             print(f"   [INFO] Detected re-uploaded file format (previous AI interpretation will be stored in note)")
 
-        # 메타데이터 상의 max_row 누적 (헤더 2행 제외)
-        if ws.max_row > 2:
-            reported_max_row += (ws.max_row - 2)
+        # 재업로드 파일: 헤더 1행만 존재 → Row 2부터 데이터
+        # 일반 파일: 헤더 2행 (제목행 + 서브헤더) → Row 3부터 데이터
+        data_start_row = 2 if is_reupload else 3
+        header_rows = 1 if is_reupload else 2
+
+        # 메타데이터 상의 max_row 누적 (헤더 행 제외)
+        if ws.max_row > header_rows:
+            reported_max_row += (ws.max_row - header_rows)
 
         consecutive_empty_rows = 0
 
-        for row_idx, row_values in enumerate(ws.iter_rows(min_row=3, max_row=1000, values_only=True), start=3):
+        for row_idx, row_values in enumerate(ws.iter_rows(min_row=data_start_row, max_row=1000, values_only=True), start=data_start_row):
             if all(cell is None for cell in row_values):
                 consecutive_empty_rows += 1
                 if consecutive_empty_rows >= 5:

@@ -8,6 +8,7 @@ import json
 import re
 from typing import Dict, List, Any
 
+from ai.providers.cloud import parse_json_response
 from utils.logger import get_logger
 
 logger = get_logger("ai.analyzers.data_profile")
@@ -51,6 +52,7 @@ class DataProfileMixin:
         local_findings = self._local_data_profile(sheet_data_samples, column_names, sheet_stats)
 
         if not use_cloud:
+            local_findings["engine"] = "local-parser"
             return local_findings
 
         try:
@@ -58,11 +60,12 @@ class DataProfileMixin:
             ai_response = await self._call_cloud_ai(prompt, target_provider)
             ai_result = self._parse_profile_response(ai_response)
 
-            # 로컬 결과와 AI 결과 병합 (로컬 결과 우선, AI로 보강)
             merged = self._merge_profile_results(local_findings, ai_result)
+            merged["engine"] = f"cloud-{target_provider}"
             return merged
         except Exception as e:
             logger.error("Data profiling failed (%s): %s", target_provider, e)
+            local_findings["engine"] = f"cloud-{target_provider}→local"
             return local_findings
 
     def _local_data_profile(
@@ -289,10 +292,11 @@ OUTPUT ONLY JSON:
 }}"""
 
     def _parse_profile_response(self, response: str) -> Dict[str, Any]:
-        """AI 프로파일링 결과 파싱"""
+        """AI 프로파일링 결과 파싱 (단계적 JSON 파서 사용)"""
         try:
-            match = re.search(r'\{.*\}', response, re.DOTALL)
-            data = json.loads(match.group(0)) if match else json.loads(response)
+            data = parse_json_response(response)
+            if not data:
+                return {"findings": [], "ai_summary": ""}
             return {
                 "findings": data.get("findings", []),
                 "ai_summary": data.get("ai_summary", "")

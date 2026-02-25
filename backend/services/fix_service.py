@@ -5,6 +5,7 @@ Fix Service - AI 스마트 수정 및 엑셀 변환
 """
 
 import io
+import os
 import pandas as pd
 from typing import List, Dict, Any, Optional
 from openpyxl import load_workbook
@@ -18,11 +19,13 @@ from utils.logger import get_logger
 
 logger = get_logger("fix_service")
 
+FIX_ERROR_QUERY_LIMIT = int(os.getenv("FIX_ERROR_QUERY_LIMIT", "200"))
+
 class FixService:
-    def __init__(self):
+    def __init__(self, ai_interpreter=None):
         self.validation_repo = ValidationRepository()
         self.rule_repo = RuleRepository()
-        self.ai_interpreter = AIRuleInterpreter()
+        self.ai_interpreter = ai_interpreter or AIRuleInterpreter()
 
     async def suggest_fixes(self, session_id: str, error_ids: List[str] = None, provider: str = None) -> List[FixSuggestion]:
         """
@@ -42,7 +45,7 @@ class FixService:
             if error_ids:
                 query = query.in_('id', error_ids)
 
-            error_result = query.limit(100).execute()
+            error_result = query.limit(FIX_ERROR_QUERY_LIMIT).execute()
             errors = error_result.data
 
             if not errors:
@@ -104,11 +107,15 @@ class FixService:
                 provider=provider
             )
 
+            # 사용된 엔진 정보를 인스턴스에 저장 (라우터에서 참조 가능)
+            self.last_engine_used = getattr(self.ai_interpreter, 'last_engine_used', 'unknown')
+
             return suggestions
 
         except Exception as e:
-            logger.error(f"Critical error in suggest_fixes: {e}")
-            return []
+            logger.error(f"Critical error in suggest_fixes: {e}", exc_info=True)
+            self.last_engine_used = "error"
+            raise
 
     def apply_fixes_to_excel(
         self,
@@ -271,8 +278,8 @@ class FixService:
                 logger.error(f"Failed to load .xlsx file: {e}")
                 raise ValueError(f"Failed to load .xlsx file: {str(e)}")
 
-        # 수정 결과 추적
-        column_stats = {}  # column -> {sheets: set, count, success, fail}
+        # 수정 결과 추적 (시트별 컬럼 단위)
+        column_stats = {}  # "sheet::column" -> {sheet, column, fix_type, success, fail, ...}
 
         # 스타일 정의 (수정된 셀 표시용)
         yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
@@ -316,17 +323,17 @@ class FixService:
             if not col_idx:
                 continue
 
-            # 통계 초기화
-            if column not in column_stats:
-                column_stats[column] = {
-                    'sheets': set(),
+            # 통계 초기화 (시트+컬럼 단위)
+            stat_key = f"{sheet}::{column}"
+            if stat_key not in column_stats:
+                column_stats[stat_key] = {
+                    'sheet': sheet,
+                    'column': column,
                     'fix_type': fix_type,
                     'success': 0,
                     'fail': 0,
                     'samples': []
                 }
-
-            column_stats[column]['sheets'].add(sheet)
 
             # 값 변환 및 셀 업데이트
             try:
@@ -339,9 +346,9 @@ class FixService:
                 if fix_type not in auto_fix_types:
                     # 수동 확인 필요: 값 변경 없이 빨간 글자로만 마킹
                     cell.font = manual_review_font
-                    column_stats[column]['manual_review'] = column_stats[column].get('manual_review', 0) + 1
-                    if len(column_stats[column]['samples']) < 3:
-                        column_stats[column]['samples'].append({
+                    column_stats[stat_key]['manual_review'] = column_stats[stat_key].get('manual_review', 0) + 1
+                    if len(column_stats[stat_key]['samples']) < 3:
+                        column_stats[stat_key]['samples'].append({
                             'before': str(original_value),
                             'after': str(original_value)
                         })
@@ -354,25 +361,24 @@ class FixService:
                     cell.value = fixed_value
 
                     # 수정 표시 (배경색 변경)
-                    # 주의: 원본 셀의 스타일(테두리, 폰트 등)은 유지되지만 배경색은 덮어씌워짐
                     cell.fill = yellow_fill
 
-                    column_stats[column]['success'] += 1
+                    column_stats[stat_key]['success'] += 1
 
                     # 샘플 저장 (최대 3개)
-                    if len(column_stats[column]['samples']) < 3:
-                        column_stats[column]['samples'].append({
+                    if len(column_stats[stat_key]['samples']) < 3:
+                        column_stats[stat_key]['samples'].append({
                             'before': str(original_value),
                             'after': str(fixed_value)
                         })
                 else:
                     # 수정 실패 표시
                     cell.fill = red_fill
-                    column_stats[column]['fail'] += 1
+                    column_stats[stat_key]['fail'] += 1
 
             except Exception as e:
                 logger.error(f"Error fixing cell {sheet}:{column}:{row} - {e}")
-                column_stats[column]['fail'] += 1
+                column_stats[stat_key]['fail'] += 1
 
         # --- [LEARNING START] Save corrections to DB ---
         try:
@@ -384,14 +390,14 @@ class FixService:
             # or skip session_id if schema allows.
 
             # Since we iterate by column statistics, let's save representative examples
-            for column, stats in column_stats.items():
+            for stat_key, stats in column_stats.items():
                 if stats['success'] > 0 and stats['samples']:
-                    # Save a few examples for this column
+                    # Save a few examples for this sheet+column
                     for sample in stats['samples']:
                         corrections_to_save.append({
                             "session_id": "00000000-0000-0000-0000-000000000000", # Placeholder
-                            "sheet_name": list(stats['sheets'])[0], # Just one sheet as example
-                            "column_name": column,
+                            "sheet_name": stats['sheet'],
+                            "column_name": stats['column'],
                             "old_value": sample['before'][:255], # Truncate if too long
                             "new_value": sample['after'][:255],
                             "correction_action": "bulk_fix",
@@ -418,56 +424,91 @@ class FixService:
         ws_log = wb.create_sheet(change_sheet_name)
 
         # 헤더 작성
-        headers = ["컬럼명", "수정 규칙", "원본 예시", "수정 예시", "적용 시트", "수정 건수", "상태"]
+        headers = ["시트명", "컬럼명", "수정 규칙", "원본 예시", "수정 예시", "수정 건수", "상태"]
+        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        header_font = Font(color="FFFFFF", bold=True)
         for col_idx, header in enumerate(headers, start=1):
             cell = ws_log.cell(row=1, column=col_idx, value=header)
-            cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-            cell.font = Font(color="FFFFFF", bold=True)
+            cell.fill = header_fill
+            cell.font = header_font
 
-        # 데이터 작성
+        # 시트별 정렬 후 데이터 작성
+        sorted_stats = sorted(column_stats.values(), key=lambda s: (s['sheet'], s['column']))
+
         row_idx = 2
-        for column, stats in column_stats.items():
+        prev_sheet = None
+        for stats in sorted_stats:
+            sheet_name = stats['sheet']
+            column = stats['column']
             fix_desc = self._get_fix_description(stats['fix_type'])
+
+            # 시트 구분선 (시트가 바뀔 때 빈 행 + 시트 소계 삽입)
+            if prev_sheet and prev_sheet != sheet_name:
+                # 이전 시트 소계
+                prev_stats_list = [s for s in sorted_stats if s['sheet'] == prev_sheet]
+                total_success = sum(s['success'] for s in prev_stats_list)
+                total_fail = sum(s['fail'] for s in prev_stats_list)
+                total_manual = sum(s.get('manual_review', 0) for s in prev_stats_list)
+                subtotal_cell = ws_log.cell(row=row_idx, column=1, value=f"[{prev_sheet} 소계]")
+                subtotal_cell.font = Font(bold=True, color="4472C4")
+                ws_log.cell(row=row_idx, column=6, value=f"성공 {total_success}건 / 실패 {total_fail}건" + (f" / 수동 {total_manual}건" if total_manual else ""))
+                row_idx += 1
+
+            prev_sheet = sheet_name
 
             # 원본/수정 예시
             before_examples = ", ".join([s['before'] for s in stats['samples'][:3]]) if stats['samples'] else "-"
             after_examples = ", ".join([s['after'] for s in stats['samples'][:3]]) if stats['samples'] else "-"
 
-            # 적용 시트
-            sheets_str = ", ".join(sorted(stats['sheets']))
-
             # 상태
             manual_count = stats.get('manual_review', 0)
             if manual_count > 0 and stats['success'] == 0 and stats['fail'] == 0:
-                status = f"🔴 수동확인 ({manual_count}건)"
+                status = f"수동확인 ({manual_count}건)"
             elif stats['fail'] == 0 and manual_count == 0:
-                status = "✅ 수정완료"
+                status = "수정완료"
             elif stats['success'] == 0 and manual_count == 0:
-                status = "❌ 수정실패"
+                status = "수정실패"
             elif manual_count > 0:
-                status = f"⚠️ 일부수동 ({manual_count}건 수동확인)"
+                status = f"일부수동 ({manual_count}건 수동확인)"
             else:
-                status = f"⚠️ 일부실패 ({stats['fail']}건)"
+                status = f"일부실패 ({stats['fail']}건)"
 
-            ws_log.cell(row=row_idx, column=1, value=column)
-            ws_log.cell(row=row_idx, column=2, value=fix_desc)
-            ws_log.cell(row=row_idx, column=3, value=before_examples)
-            ws_log.cell(row=row_idx, column=4, value=after_examples)
-            ws_log.cell(row=row_idx, column=5, value=sheets_str)
+            ws_log.cell(row=row_idx, column=1, value=sheet_name)
+            ws_log.cell(row=row_idx, column=2, value=column)
+            ws_log.cell(row=row_idx, column=3, value=fix_desc)
+            ws_log.cell(row=row_idx, column=4, value=before_examples)
+            ws_log.cell(row=row_idx, column=5, value=after_examples)
             count_text = f"{stats['success']}건" if manual_count == 0 else f"{stats['success']}건 (수동 {manual_count}건)"
             ws_log.cell(row=row_idx, column=6, value=count_text)
-            ws_log.cell(row=row_idx, column=7, value=status)
+
+            # 상태 셀에 색상 적용
+            status_cell = ws_log.cell(row=row_idx, column=7, value=status)
+            if "수정완료" in status:
+                status_cell.font = Font(color="228B22")
+            elif "실패" in status or "수동확인" in status:
+                status_cell.font = Font(color="FF0000", bold=True)
 
             row_idx += 1
 
+        # 마지막 시트 소계
+        if prev_sheet:
+            last_stats_list = [s for s in sorted_stats if s['sheet'] == prev_sheet]
+            total_success = sum(s['success'] for s in last_stats_list)
+            total_fail = sum(s['fail'] for s in last_stats_list)
+            total_manual = sum(s.get('manual_review', 0) for s in last_stats_list)
+            subtotal_cell = ws_log.cell(row=row_idx, column=1, value=f"[{prev_sheet} 소계]")
+            subtotal_cell.font = Font(bold=True, color="4472C4")
+            ws_log.cell(row=row_idx, column=6, value=f"성공 {total_success}건 / 실패 {total_fail}건" + (f" / 수동 {total_manual}건" if total_manual else ""))
+            row_idx += 1
+
         # 컬럼 너비 자동 조정
-        ws_log.column_dimensions['A'].width = 15
-        ws_log.column_dimensions['B'].width = 30
-        ws_log.column_dimensions['C'].width = 25
+        ws_log.column_dimensions['A'].width = 20
+        ws_log.column_dimensions['B'].width = 15
+        ws_log.column_dimensions['C'].width = 30
         ws_log.column_dimensions['D'].width = 25
         ws_log.column_dimensions['E'].width = 25
-        ws_log.column_dimensions['F'].width = 12
-        ws_log.column_dimensions['G'].width = 15
+        ws_log.column_dimensions['F'].width = 15
+        ws_log.column_dimensions['G'].width = 20
 
         # 저장 (BytesIO로 출력)
         output = io.BytesIO()

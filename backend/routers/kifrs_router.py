@@ -140,7 +140,7 @@ async def apply_standard_rules(rule_file_id: str = Form(..., description="대상
                     "ai_confidence_score": 1.0,
                     "is_common": True,
                 }
-                await rule_service.repository.create_rule(rule_data)
+                await rule_service.repository.create_single_rule(rule_data)
                 created_count += 1
             except Exception as inner_e:
                 logger.warning(f"Rule template apply error: {inner_e}")

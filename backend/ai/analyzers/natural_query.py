@@ -5,12 +5,16 @@ Natural Language Query Mixin
 """
 
 import json
+import os
 import re
 from typing import Dict, List, Any, Optional
 
+from ai.providers.cloud import parse_json_response
 from utils.logger import get_logger
 
 logger = get_logger("ai.analyzers.natural_query")
+
+AI_PROMPT_MAX_CHARS = int(os.getenv("AI_PROMPT_MAX_CHARS", "8000"))
 
 
 class NaturalQueryMixin:
@@ -211,11 +215,17 @@ class NaturalQueryMixin:
                 data_summary[sheet]["row_count"] = len(sheet_data[sheet])
                 data_summary[sheet]["sample"] = sheet_data[sheet].head(5).to_dict('records')
 
+        data_json = json.dumps(data_summary, ensure_ascii=False, default=str)
+        if len(data_json) > AI_PROMPT_MAX_CHARS:
+            logger.warning("Natural query 데이터가 %d자로 %d자 제한 초과, 잘림 발생",
+                           len(data_json), AI_PROMPT_MAX_CHARS)
+            data_json = data_json[:AI_PROMPT_MAX_CHARS] + "..."
+
         prompt = f"""당신은 한국어 데이터 질의 전문가입니다.
 사용자의 자연어 질문을 분석하여 데이터에서 조건에 맞는 행을 찾아주세요.
 
 데이터 구조:
-{json.dumps(data_summary, ensure_ascii=False, default=str)[:3000]}
+{data_json}
 
 사용자 질문: {query}
 
@@ -228,12 +238,8 @@ class NaturalQueryMixin:
     "summary": "결과 요약"
 }}"""
 
-        response = self._call_cloud_ai_sync(prompt, provider)
-        try:
-            match = re.search(r'\{.*\}', response, re.DOTALL)
-            parsed = json.loads(match.group(0)) if match else {}
-        except Exception:
-            parsed = {}
+        response = await self._call_cloud_ai_async(prompt, provider)
+        parsed = parse_json_response(response)
 
         # 파싱된 조건으로 로컬 필터링 실행
         conditions = parsed.get("conditions", [])

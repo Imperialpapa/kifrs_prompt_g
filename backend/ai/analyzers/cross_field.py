@@ -8,6 +8,7 @@ import json
 import re
 from typing import Dict, List, Any
 
+from ai.providers.cloud import parse_json_response
 from utils.logger import get_logger
 
 logger = get_logger("ai.analyzers.cross_field")
@@ -46,16 +47,21 @@ class CrossFieldMixin:
         use_cloud = self._check_provider_availability(target_provider)
 
         if not use_cloud:
-            # 로컬 폴백: 결정론적 크로스필드 체크
-            return self._local_cross_field_check(sheet_data_samples, column_names)
+            result = self._local_cross_field_check(sheet_data_samples, column_names)
+            result["engine"] = "local-parser"
+            return result
 
         try:
             prompt = self._build_cross_field_prompt(sheet_data_samples, column_names)
             ai_response = await self._call_cloud_ai(prompt, target_provider)
-            return self._parse_cross_field_response(ai_response)
+            result = self._parse_cross_field_response(ai_response)
+            result["engine"] = f"cloud-{target_provider}"
+            return result
         except Exception as e:
             logger.error("Cross-field analysis failed (%s): %s", target_provider, e)
-            return self._local_cross_field_check(sheet_data_samples, column_names)
+            result = self._local_cross_field_check(sheet_data_samples, column_names)
+            result["engine"] = f"cloud-{target_provider}→local"
+            return result
 
     def _build_cross_field_prompt(
         self,
@@ -107,10 +113,11 @@ OUTPUT ONLY the following JSON structure (no markdown, no extra text):
 }}"""
 
     def _parse_cross_field_response(self, response: str) -> Dict[str, Any]:
-        """AI 크로스필드 분석 결과 파싱"""
+        """AI 크로스필드 분석 결과 파싱 (단계적 JSON 파서 사용)"""
         try:
-            match = re.search(r'\{.*\}', response, re.DOTALL)
-            data = json.loads(match.group(0)) if match else json.loads(response)
+            data = parse_json_response(response)
+            if not data:
+                return {"contradictions": [], "analysis_summary": "AI 응답 파싱 실패", "total_issues": 0}
             contradictions = data.get("contradictions", [])
             return {
                 "contradictions": contradictions,

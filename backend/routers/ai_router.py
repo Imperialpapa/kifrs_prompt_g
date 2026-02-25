@@ -6,10 +6,12 @@ AI Router - AI 분석 엔드포인트
 """
 
 import io
+import os
 import traceback
 from datetime import datetime
 from urllib.parse import quote
 
+import numpy as np
 import pandas as pd
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form
 from fastapi.responses import StreamingResponse
@@ -20,6 +22,57 @@ from utils.excel_parser import get_visible_sheet_names
 
 logger = get_logger("ai_router")
 router = APIRouter(tags=["AI Analysis"])
+
+AI_SAMPLE_SIZE = int(os.getenv("AI_SAMPLE_SIZE", "50"))
+
+
+def stratified_sample(df: pd.DataFrame, n: int = AI_SAMPLE_SIZE) -> pd.DataFrame:
+    """
+    층화 샘플링: 이상치, 결측 포함 행, 정상 행을 균형있게 추출
+
+    단순 head(n) 대신 데이터의 다양한 특성을 포함하여 AI가 더 정확한 분석을 할 수 있도록 합니다.
+    """
+    if len(df) <= n:
+        return df
+
+    indices = set()
+
+    # 1. 결측값 포함 행 (최대 n//4)
+    null_mask = df.isna().any(axis=1)
+    null_indices = df[null_mask].index.tolist()
+    if null_indices:
+        sample_count = min(len(null_indices), n // 4)
+        indices.update(np.random.choice(null_indices, sample_count, replace=False))
+
+    # 2. 숫자 컬럼 이상치 행 (최대 n//4)
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    for col in numeric_cols[:3]:  # 최대 3개 숫자 컬럼만
+        col_data = df[col].dropna()
+        if len(col_data) < 5:
+            continue
+        q1 = col_data.quantile(0.25)
+        q3 = col_data.quantile(0.75)
+        iqr = q3 - q1
+        if iqr > 0:
+            outlier_mask = (df[col] < q1 - 1.5 * iqr) | (df[col] > q3 + 1.5 * iqr)
+            outlier_indices = df[outlier_mask].index.tolist()
+            if outlier_indices:
+                sample_count = min(len(outlier_indices), n // 8)
+                indices.update(np.random.choice(outlier_indices, sample_count, replace=False))
+
+    # 3. 첫/마지막 행 (경계값)
+    indices.add(df.index[0])
+    indices.add(df.index[-1])
+
+    # 4. 나머지를 무작위 샘플로 채움
+    remaining = n - len(indices)
+    if remaining > 0:
+        available = [i for i in df.index if i not in indices]
+        if available:
+            sample_count = min(len(available), remaining)
+            indices.update(np.random.choice(available, sample_count, replace=False))
+
+    return df.loc[sorted(indices)]
 
 
 # =============================================================================
@@ -56,9 +109,10 @@ async def cross_field_analysis(
             cols = [str(c) for c in df.columns]
             column_names[sheet_name] = cols
 
-            # 샘플 데이터 (최대 50행)
+            # 층화 샘플링 (이상치/결측/정상 균형 포함)
+            sampled_df = stratified_sample(df)
             samples = []
-            for idx, row in df.head(50).iterrows():
+            for idx, row in sampled_df.iterrows():
                 row_dict = {}
                 for col in cols:
                     val = row[col]
@@ -125,9 +179,10 @@ async def data_profile(
                 "null_counts": null_counts
             }
 
-            # 샘플 데이터 (최대 50행)
+            # 층화 샘플링 (이상치/결측/정상 균형 포함)
+            sampled_df = stratified_sample(df)
             samples = []
-            for idx, row in df.head(50).iterrows():
+            for idx, row in sampled_df.iterrows():
                 row_dict = {}
                 for col in cols:
                     val = row[col]

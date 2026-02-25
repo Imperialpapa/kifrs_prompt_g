@@ -344,7 +344,8 @@ class ValidationService:
             "rules_by_sheet": rules_by_sheet,
             "sheet_order": sheet_order,
             "column_order_map": column_order_map,
-            "ai_role_summary": ai_summary_text
+            "ai_role_summary": ai_summary_text,
+            "ai_model_version": "local-parser (rule-engine)"
         })
 
         # Step 5: 세션 저장

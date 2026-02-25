@@ -4,6 +4,8 @@ AI Cache Service - AI 규칙 해석 및 캐싱
 업로드된 규칙을 AI로 해석하고 데이터베이스에 캐싱
 """
 
+import asyncio
+import os
 from typing import List, Dict, Any, Tuple, Optional
 from uuid import UUID, uuid4
 from datetime import datetime
@@ -12,6 +14,8 @@ from database.rule_repository import RuleRepository
 from ai_layer import AIRuleInterpreter
 from models import ValidationRule, RuleSource
 from utils.logger import get_logger
+
+INTERPRET_BATCH_SIZE = int(os.getenv("INTERPRET_BATCH_SIZE", "10"))
 
 logger = get_logger("ai_cache_service")
 
@@ -59,19 +63,48 @@ class AICacheService:
         if not rules_to_interpret:
             return {"total_rules": total_rules, "interpreted_rules": 0, "skipped_rules": skipped_count}
 
-        # Step 3: 통합된 Smart Interpret 로직 실행
+        # Step 3: 통합된 Smart Interpret 로직 실행 (배치 병렬 처리)
         interpreted_results = []
-        for db_rule in rules_to_interpret:
-            interpretation, source = await self.smart_interpret_single(
-                rule_text=db_rule.get('rule_text'),
-                field_name=db_rule.get('field_name'),
-                force_local=force_local
+        total_to_interpret = len(rules_to_interpret)
+
+        for batch_start in range(0, total_to_interpret, INTERPRET_BATCH_SIZE):
+            batch = rules_to_interpret[batch_start:batch_start + INTERPRET_BATCH_SIZE]
+
+            async def _interpret_one(db_rule):
+                interpretation, source = await self.smart_interpret_single(
+                    rule_text=db_rule.get('rule_text'),
+                    field_name=db_rule.get('field_name'),
+                    force_local=force_local
+                )
+                return {"db_rule": db_rule, "interpretation": interpretation, "source": source}
+
+            batch_results = await asyncio.gather(
+                *[_interpret_one(rule) for rule in batch],
+                return_exceptions=True
             )
-            interpreted_results.append({
-                "db_rule": db_rule,
-                "interpretation": interpretation,
-                "source": source
-            })
+
+            for i, result in enumerate(batch_results):
+                if isinstance(result, Exception):
+                    logger.error(f"Failed to interpret rule: {result}")
+                    # 실패한 규칙은 custom fallback으로 처리
+                    db_rule = batch[i]
+                    interpreted_results.append({
+                        "db_rule": db_rule,
+                        "interpretation": {
+                            "rule_type": "custom",
+                            "rule_id": f"RULE_ERR_{uuid4().hex[:8]}",
+                            "parameters": {"description": db_rule.get('rule_text', '')},
+                            "error_message": f"{db_rule.get('field_name', '')} 검증 실패",
+                            "confidence_score": 0.5,
+                            "interpretation_summary": "해석 실패 (수동 확인 필요)"
+                        },
+                        "source": "error-fallback"
+                    })
+                else:
+                    interpreted_results.append(result)
+
+            if batch_start + INTERPRET_BATCH_SIZE < total_to_interpret:
+                logger.info(f"Interpreted {min(batch_start + INTERPRET_BATCH_SIZE, total_to_interpret)}/{total_to_interpret} rules...")
 
         # Step 4: 결과 저장 (캐싱)
         interpreted_count = 0

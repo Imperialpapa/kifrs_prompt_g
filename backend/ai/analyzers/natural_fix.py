@@ -8,6 +8,7 @@ import json
 import re
 from typing import Dict, List, Any
 
+from ai.providers.cloud import parse_json_response
 from utils.logger import get_logger
 
 logger = get_logger("ai.analyzers.natural_fix")
@@ -151,10 +152,11 @@ class NaturalFixMixin:
     "interpretation": "해석 설명"
 }}"""
 
-        response = self._call_cloud_ai_sync(prompt, provider)
+        response = await self._call_cloud_ai_async(prompt, provider)
         try:
-            match = re.search(r'\{.*\}', response, re.DOTALL)
-            parsed = json.loads(match.group(0)) if match else {}
+            parsed = parse_json_response(response)
+            if not parsed:
+                return self._parse_fix_local(instruction, column_names)
             parsed["instruction"] = instruction
             return parsed
         except Exception:

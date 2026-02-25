@@ -26,10 +26,11 @@ class RuleService:
     Service layer for rule management
     """
 
-    def __init__(self, repository=None, ai_cache_service=None):
+    def __init__(self, repository=None, ai_cache_service=None, kifrs_dbo_service=None):
         """Initialize service with repository and cache service"""
         self.repository = repository or RuleRepository()
         self.ai_cache_service = ai_cache_service
+        self.kifrs_dbo_service = kifrs_dbo_service
 
     async def upload_rule_file(
         self,
@@ -132,6 +133,42 @@ class RuleService:
             # Step 5: Batch insert rules
             for r in rules_to_insert: r["rule_file_id"] = file_id
             await self.repository.create_rules_batch(rules_to_insert)
+
+            # Step 5.5: Auto-merge standard rule templates (DBO 필수필드 규칙)
+            if self.kifrs_dbo_service:
+                try:
+                    templates = self.kifrs_dbo_service.get_standard_rule_templates()
+                    std_rules_to_insert = []
+                    for tmpl in templates:
+                        params_key = json.dumps(tmpl.get("ai_parameters", {}), sort_keys=True)
+                        tmpl_key = (tmpl["field_name"], tmpl["ai_rule_type"], params_key, "")
+                        if tmpl_key in seen_rules:
+                            continue
+                        seen_rules.add(tmpl_key)
+                        std_rules_to_insert.append({
+                            "rule_file_id": file_id,
+                            "sheet_name": "Common",
+                            "row_number": "0",
+                            "column_letter": "",
+                            "field_name": tmpl["field_name"],
+                            "rule_text": tmpl["rule_text"],
+                            "condition": "",
+                            "note": f"[표준규칙] {tmpl.get('category', '')} - {tmpl.get('kifrs_ref', '')}",
+                            "is_active": True,
+                            "is_common": True,
+                            "ai_rule_id": f"STD_{tmpl['ai_rule_type'].upper()}_{tmpl['field_name']}",
+                            "ai_rule_type": tmpl["ai_rule_type"],
+                            "ai_parameters": tmpl.get("ai_parameters", {}),
+                            "ai_error_message": tmpl.get("ai_error_message", ""),
+                            "ai_interpretation_summary": f"표준규칙 자동적용 ({tmpl.get('kifrs_ref', '')})",
+                            "ai_confidence_score": 1.0,
+                            "ai_model_version": "standard-template"
+                        })
+                    if std_rules_to_insert:
+                        await self.repository.create_rules_batch(std_rules_to_insert)
+                        logger.info(f"Auto-applied {len(std_rules_to_insert)} standard rule templates")
+                except Exception as e:
+                    logger.warning(f"Failed to auto-apply standard rules: {e}")
 
             # Step 6: Save original file for future re-interpretation
             await self.repository.save_original_file(UUID(file_id), excel_content)

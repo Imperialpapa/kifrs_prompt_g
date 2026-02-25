@@ -165,6 +165,9 @@ function app() {
         crossFieldSeverityFilter: 'all',
         profileCategoryFilter: 'all',
 
+        // Validation Status State
+        validationStatusExpandedSheets: [],
+
         // Fix suggestions state
         fixSuggestions: [],
         selectedFixes: [],
@@ -186,6 +189,7 @@ function app() {
                 title: "결과 분석 및 수정",
                 items: [
                     { id: 'fix', label: '오류 항목 수정하기', icon: 'ph-wrench' },
+                    { id: 'validation_status', label: '정상 항목 검증결과', icon: 'ph-check-square' },
                     { id: 'compliance', label: 'K-IFRS 컴플라이언스', icon: 'ph-shield-check' },
                     { id: 'dbo_check', label: 'DBO 전문 검증', icon: 'ph-calculator' },
                     { id: 'natural_fix', label: '자연어 수정', icon: 'ph-pencil-simple-line' },
@@ -734,10 +738,12 @@ function app() {
             for (const error of this.results.errors) {
                 const sheet = error.sheet || '기본';
                 const col = error.column;
-                const key = `${sheet}::${col}`;
+                const ruleId = error.rule_id || 'unknown';
+                const key = `${sheet}::${col}::${ruleId}`;
                 if (!groupMap[key]) {
                     groupMap[key] = {
-                        key, sheet, column: col, count: 0, sampleValues: [], ruleTypes: new Set(), messages: new Set(),
+                        key, sheet, column: col, rule_id: ruleId, rule_text: error.source_rule || '',
+                        count: 0, sampleValues: [], ruleTypes: new Set(), messages: new Set(),
                         hasDatePattern: false, hasCommaNumber: false, hasGenderText: false
                     };
                 }
@@ -803,7 +809,7 @@ function app() {
             let successCount = 0;
             let manualCount = 0;
             for (const error of this.results.errors) {
-                const key = `${error.sheet || '기본'}::${error.column}`;
+                const key = `${error.sheet || '기본'}::${error.column}::${error.rule_id || 'unknown'}`;
                 if (!this.selectedFixItems.includes(key)) continue;
                 const group = groups.find(g => g.key === key);
                 const fixType = group?.fixType || 'unknown';
@@ -878,13 +884,13 @@ function app() {
             this.isDownloading = true;
             try {
                 const groups = this.getErrorsBySheetAndColumn();
-                const cellsToFix = this.results.errors.filter(e => this.selectedFixItems.includes(`${e.sheet || '기본'}::${e.column}`))
-                    .map(e => ({ 
-                        sheet: e.sheet, 
-                        row: e.row, 
-                        column: e.column, 
-                        currentValue: e.actual_value, 
-                        fixType: groups.find(g => g.key === `${e.sheet || '기본'}::${e.column}`)?.fixType || 'unknown' 
+                const cellsToFix = this.results.errors.filter(e => this.selectedFixItems.includes(`${e.sheet || '기본'}::${e.column}::${e.rule_id || 'unknown'}`))
+                    .map(e => ({
+                        sheet: e.sheet,
+                        row: e.row,
+                        column: e.column,
+                        currentValue: e.actual_value,
+                        fixType: groups.find(g => g.key === `${e.sheet || '기본'}::${e.column}::${e.rule_id || 'unknown'}`)?.fixType || 'unknown'
                     }));
                 const formData = new FormData();
                 formData.append('original_file', this.fileA);
@@ -913,6 +919,49 @@ function app() {
             if (!this.selectedSheet || !this.results?.metadata?.sheets_summary) return null;
             return this.results.metadata.sheets_summary[this.selectedSheet];
         },
+
+        // =================================================================
+        // Validation Status (정상 항목 검증결과) Methods
+        // =================================================================
+        getValidationStatusBySheet() {
+            const rulesBySheet = this.results?.metadata?.rules_by_sheet;
+            const sheetOrder = this.results?.metadata?.sheet_order || [];
+            if (!rulesBySheet) return [];
+
+            const orderedSheets = sheetOrder.length > 0 ? sheetOrder : Object.keys(rulesBySheet);
+            return orderedSheets.map(sheetName => {
+                const rules = rulesBySheet[sheetName] || [];
+                const passRules = rules.filter(r => r.error_count === 0);
+                return {
+                    sheetName,
+                    rules: passRules,
+                    totalRules: rules.length,
+                    passCount: passRules.length
+                };
+            }).filter(s => s.passCount > 0);
+        },
+        toggleValidationSheet(sheetName) {
+            const idx = this.validationStatusExpandedSheets.indexOf(sheetName);
+            if (idx >= 0) this.validationStatusExpandedSheets.splice(idx, 1);
+            else this.validationStatusExpandedSheets.push(sheetName);
+        },
+        isValidationSheetExpanded(sheetName) {
+            return this.validationStatusExpandedSheets.includes(sheetName);
+        },
+        getValidationTotalStats() {
+            const rulesBySheet = this.results?.metadata?.rules_by_sheet;
+            if (!rulesBySheet) return { total: 0, pass: 0, error: 0, passRate: 0 };
+            const allRules = Object.values(rulesBySheet).flat();
+            const pass = allRules.filter(r => r.error_count === 0).length;
+            const error = allRules.filter(r => r.error_count > 0).length;
+            return {
+                total: allRules.length,
+                pass,
+                error,
+                passRate: allRules.length > 0 ? Math.round((pass / allRules.length) * 100) : 100
+            };
+        },
+
         // =================================================================
         // Settings Methods (localStorage persistence)
         // =================================================================

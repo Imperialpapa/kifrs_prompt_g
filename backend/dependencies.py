@@ -27,12 +27,14 @@ ai_cache_service = AICacheService(
     learning_service=learning_service
 )
 
+kifrs_dbo_service = KifrsDboService()
+
 rule_service = RuleService(
-    ai_cache_service=ai_cache_service
+    ai_cache_service=ai_cache_service,
+    kifrs_dbo_service=kifrs_dbo_service
 )
 
 validation_service = ValidationService()
 feedback_service = FeedbackService()
 statistics_service = StatisticsService()
-fix_service = FixService()
-kifrs_dbo_service = KifrsDboService()
+fix_service = FixService(ai_interpreter=ai_interpreter)

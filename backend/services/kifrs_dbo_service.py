@@ -772,15 +772,6 @@ class KifrsDboService:
                 "kifrs_ref": "제73항"
             },
             {
-                "field_name": "성명",
-                "rule_text": "필수 입력, 공백 불가",
-                "ai_rule_type": "required",
-                "ai_parameters": {},
-                "ai_error_message": "성명은 필수 입력입니다.",
-                "category": "필수값",
-                "kifrs_ref": "제73항"
-            },
-            {
                 "field_name": "생년월일",
                 "rule_text": "필수 입력, YYYYMMDD 형식, 18세~70세 범위",
                 "ai_rule_type": "format",
@@ -813,6 +804,70 @@ class KifrsDboService:
                 "ai_rule_type": "range",
                 "ai_parameters": {"min": 0, "exclusive_min": True},
                 "ai_error_message": "급여는 0보다 큰 숫자여야 합니다.",
+                "category": "필수값/범위",
+                "kifrs_ref": "제73항"
+            },
+            # ── DBO 필수필드 공백 체크 규칙 ──
+            {
+                "field_name": "생년월일",
+                "rule_text": "필수 입력, 공백 불가",
+                "ai_rule_type": "required",
+                "ai_parameters": {},
+                "ai_error_message": "생년월일은 필수 입력이며 공백일 수 없습니다.",
+                "category": "필수값",
+                "kifrs_ref": "제73항"
+            },
+            {
+                "field_name": "성별",
+                "rule_text": "필수 입력, 공백 불가",
+                "ai_rule_type": "required",
+                "ai_parameters": {},
+                "ai_error_message": "성별은 필수 입력이며 공백일 수 없습니다.",
+                "category": "필수값",
+                "kifrs_ref": "제73항"
+            },
+            {
+                "field_name": "입사일",
+                "rule_text": "필수 입력, 공백 불가",
+                "ai_rule_type": "required",
+                "ai_parameters": {},
+                "ai_error_message": "입사일은 필수 입력이며 공백일 수 없습니다.",
+                "category": "필수값",
+                "kifrs_ref": "제73항"
+            },
+            {
+                "field_name": "퇴사일",
+                "rule_text": "퇴직자는 퇴사일 필수 입력, 공백 불가",
+                "ai_rule_type": "conditional_required",
+                "ai_parameters": {"condition_field": "재직구분", "condition_values": ["퇴직", "퇴직자", "퇴사", "2"], "then": "required"},
+                "ai_error_message": "퇴직자의 퇴사일은 필수 입력이며 공백일 수 없습니다.",
+                "category": "필수값",
+                "kifrs_ref": "제73항"
+            },
+            {
+                "field_name": "재직구분",
+                "rule_text": "필수 입력, 공백 불가",
+                "ai_rule_type": "required",
+                "ai_parameters": {},
+                "ai_error_message": "재직구분은 필수 입력이며 공백일 수 없습니다.",
+                "category": "필수값",
+                "kifrs_ref": "제73항"
+            },
+            {
+                "field_name": "기본급",
+                "rule_text": "필수 입력, 공백 불가",
+                "ai_rule_type": "required",
+                "ai_parameters": {},
+                "ai_error_message": "기본급은 필수 입력이며 공백일 수 없습니다.",
+                "category": "필수값",
+                "kifrs_ref": "제73항"
+            },
+            {
+                "field_name": "기본급",
+                "rule_text": "숫자, 0 이상의 값",
+                "ai_rule_type": "range",
+                "ai_parameters": {"min": 0},
+                "ai_error_message": "기본급은 0 이상의 숫자여야 합니다.",
                 "category": "필수값/범위",
                 "kifrs_ref": "제73항"
             },

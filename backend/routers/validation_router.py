@@ -416,10 +416,13 @@ async def explain_error(request: ExplainErrorRequest):
 # 5. Fix Suggestions
 # =============================================================================
 
-@router.post("/fix/suggest", response_model=List[FixSuggestion])
+@router.post("/fix/suggest")
 async def suggest_fixes(request: FixSuggestRequest):
     """
     오류에 대한 AI 수정 제안 생성
+
+    Returns:
+        Dict: suggestions 리스트 + engine_used 메타데이터
     """
     try:
         logger.info(f"Suggest fixes for session: {request.session_id}, errors: {len(request.error_ids) if request.error_ids else 'all'}")
@@ -428,8 +431,13 @@ async def suggest_fixes(request: FixSuggestRequest):
             request.error_ids,
             provider=request.ai_provider
         )
-        logger.info(f"Generated {len(suggestions)} fix suggestions")
-        return suggestions
+        engine_used = getattr(fix_service, 'last_engine_used', 'unknown')
+        logger.info(f"Generated {len(suggestions)} fix suggestions (engine: {engine_used})")
+        return {
+            "suggestions": suggestions,
+            "engine_used": engine_used,
+            "total_count": len(suggestions)
+        }
     except Exception as e:
         logger.error(f"Suggest fixes failed: {e}")
         logger.debug(traceback.format_exc())

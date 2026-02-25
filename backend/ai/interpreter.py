@@ -24,7 +24,7 @@ from models import (
 )
 from utils.logger import get_logger
 
-from ai.providers.cloud import CloudProviderMixin
+from ai.providers.cloud import CloudProviderMixin, parse_json_response
 from ai.analyzers.cross_field import CrossFieldMixin
 from ai.analyzers.data_profile import DataProfileMixin
 from ai.analyzers.natural_query import NaturalQueryMixin
@@ -33,6 +33,21 @@ from ai.analyzers.compliance import ComplianceMixin
 from ai.analyzers.natural_fix import NaturalFixMixin
 
 logger = get_logger("ai.interpreter")
+
+# =========================================================================
+# Module-level Constants (중복 정의 방지)
+# =========================================================================
+
+NUMERIC_FIELD_KEYWORDS = [
+    "급여", "금액", "수당", "원", "임금", "보수", "연봉", "월급",
+    "salary", "amount", "wage", "pay", "bonus", "income",
+    "기준급", "평균급", "통상급", "퇴직금", "retirement"
+]
+
+DATE_FIELD_KEYWORDS = [
+    "일", "일자", "date", "날짜", "기준일", "입사", "퇴사", "생년월일",
+    "정산", "산정", "기산", "만료", "시작", "종료"
+]
 
 
 class AIRuleInterpreter(
@@ -98,7 +113,7 @@ class AIRuleInterpreter(
                 rules, conflicts = self._parse_ai_response(ai_response)
                 self.use_cloud_ai = True
             except Exception as e:
-                logger.info("Cloud inference (%s) failed, falling back to local engine: %s", target_provider, e)
+                logger.warning("Cloud inference (%s) failed, falling back to local engine: %s", target_provider, e)
                 rules, conflicts = self._local_rule_parser(natural_language_rules)
                 self.use_cloud_ai = False
         else:
@@ -123,8 +138,14 @@ class AIRuleInterpreter(
     ) -> List[FixSuggestion]:
         """
         오류에 대한 수정 제안 생성 (하이브리드: 로컬 우선 -> 필요 시 클라우드 AI)
+
+        self.last_engine_used에 사용된 엔진 정보를 기록합니다:
+        - "local": 로컬 휴리스틱 엔진
+        - "cloud-{provider}": 클라우드 AI
+        - "cloud-{provider}→local": 클라우드 실패 후 로컬 fallback
         """
         if not errors:
+            self.last_engine_used = "none"
             return []
 
         # 1. 로컬 휴리스틱 엔진 실행 (즉각적인 수정 제안)
@@ -144,8 +165,6 @@ class AIRuleInterpreter(
         use_cloud = self._check_provider_availability(target_provider)
 
         if use_cloud:
-            # 로컬 엔진이 처리하지 못한 항목이나 신뢰도 낮은 항목에 대해 AI 호출 고려 가능
-            # 현재는 일관성을 위해 클라우드 AI에게 전체 문맥을 전달하여 제안을 정교화함
             try:
                 prompt = self._build_correction_prompt(errors, past_corrections)
                 ai_response = await self._call_cloud_ai(prompt, target_provider)
@@ -154,12 +173,18 @@ class AIRuleInterpreter(
                 # 클라우드 제안에 대해서도 안전 검증 적용
                 valid_cloud_suggestions = self._filter_invalid_suggestions(cloud_suggestions, column_rule_map)
 
-                # 클라우드 제안이 있으면 우선 사용 (병합)
-                return valid_cloud_suggestions if valid_cloud_suggestions else local_suggestions
+                if valid_cloud_suggestions:
+                    self.last_engine_used = f"cloud-{target_provider}"
+                    return valid_cloud_suggestions
+                else:
+                    self.last_engine_used = "local"
+                    return local_suggestions
             except Exception as e:
                 logger.error("Cloud correction failed (%s), using local engine: %s", target_provider, e)
+                self.last_engine_used = f"cloud-{target_provider}→local"
                 return local_suggestions
 
+        self.last_engine_used = "local"
         return local_suggestions
 
     def _filter_invalid_suggestions(self, suggestions: List[FixSuggestion], column_rule_map: Dict[str, Any] = None) -> List[FixSuggestion]:
@@ -172,13 +197,6 @@ class AIRuleInterpreter(
         """
         valid_suggestions = []
         column_rule_map = column_rule_map or {}
-
-        # 금액/숫자 관련 필드 키워드 (로컬 엔진과 동일하게 유지)
-        numeric_field_keywords = [
-            "급여", "금액", "수당", "원", "임금", "보수", "연봉", "월급",
-            "salary", "amount", "wage", "pay", "bonus", "income",
-            "기준급", "평균급", "통상급", "퇴직금", "retirement"
-        ]
 
         for sugg in suggestions:
             field = sugg.column
@@ -196,7 +214,7 @@ class AIRuleInterpreter(
                               (rule_type == 'format' and 'numeric' in str(rule_params)) or \
                               (rule_type == 'custom' and any(kw in str(rule_params) for kw in ['number', 'amount', '금액']))
 
-            is_numeric_keyword = any(kw in field for kw in numeric_field_keywords) or \
+            is_numeric_keyword = any(kw in field for kw in NUMERIC_FIELD_KEYWORDS) or \
                                  any(kw in field_lower for kw in ["salary", "amount", "wage", "pay"])
 
             is_numeric_field = is_numeric_rule or is_numeric_keyword
@@ -232,38 +250,99 @@ class AIRuleInterpreter(
         provider: str = None
     ) -> Dict[str, str]:
         """
-        검증 오류에 대한 AI 기반의 설명과 권장 조치를 생성합니다.
+        검증 오류에 대한 설명과 권장 조치를 생성합니다.
+        Cloud AI 사용 불가 시 로컬 템플릿 기반 설명을 제공합니다.
         """
         target_provider = (provider or self.default_provider).lower()
         use_cloud = self._check_provider_availability(target_provider)
 
         if not use_cloud:
-            return {
-                "explanation": "AI 설명 기능을 사용할 수 없습니다. (설정 필요)",
-                "recommendation": "관리자에게 문의하여 AI Provider 설정을 확인하세요."
-            }
+            return self._local_error_explanation(error)
 
         try:
             prompt = self._build_explanation_prompt(error)
             ai_response_str = await self._call_cloud_ai(prompt, target_provider)
 
-            # AI 응답 파싱
-            match = re.search(r'\{.*\}', ai_response_str, re.DOTALL)
-            if not match:
+            response_json = parse_json_response(ai_response_str)
+            if not response_json:
                 return {"explanation": ai_response_str, "recommendation": "AI가 생성한 설명을 참고하여 데이터를 직접 수정하세요."}
-
-            response_json = json.loads(match.group(0))
 
             return {
                 "explanation": response_json.get("explanation", "AI가 설명을 생성하지 못했습니다."),
                 "recommendation": response_json.get("recommendation", "데이터를 직접 확인하고 수정하세요.")
             }
         except Exception as e:
-            logger.error("Error getting explanation: %s", e)
+            logger.error("Cloud explanation failed, using local fallback: %s", e)
+            return self._local_error_explanation(error)
+
+    def _local_error_explanation(self, error: 'ValidationError') -> Dict[str, str]:
+        """
+        Cloud AI 없이 규칙 타입 기반으로 오류 설명을 생성하는 로컬 fallback
+        """
+        rule_id = getattr(error, 'rule_id', '') or ''
+        message = getattr(error, 'message', '') or ''
+        column = getattr(error, 'column', '') or ''
+        actual_value = getattr(error, 'actual_value', '') or ''
+
+        # 규칙 ID/메시지에서 오류 유형 추론
+        explanation_templates = {
+            "required": {
+                "explanation": f"'{column}' 필드에 값이 입력되지 않았습니다. 이 필드는 DBO 산정에 필수적인 데이터로, 비어있으면 정확한 퇴직급여충당부채를 계산할 수 없습니다.",
+                "recommendation": "해당 직원의 인사 기록을 확인하여 누락된 데이터를 입력하세요."
+            },
+            "no_duplicates": {
+                "explanation": f"'{column}' 필드에서 동일한 값('{actual_value}')이 다른 행에도 존재합니다. 중복된 데이터는 DBO 산정 시 인원수 과대 계상의 원인이 됩니다.",
+                "recommendation": "중복된 행이 실제로 다른 직원인지, 아니면 잘못 입력된 데이터인지 확인하세요."
+            },
+            "format": {
+                "explanation": f"'{column}' 필드의 값('{actual_value}')이 요구되는 형식과 맞지 않습니다. 형식이 맞지 않으면 시스템이 데이터를 올바르게 처리할 수 없습니다.",
+                "recommendation": "오류 메시지에 표시된 올바른 형식을 확인하고, 해당 형식에 맞게 데이터를 수정하세요."
+            },
+            "range": {
+                "explanation": f"'{column}' 필드의 값('{actual_value}')이 허용 범위를 벗어났습니다. 비정상적인 값은 DBO 산정 결과의 왜곡을 초래할 수 있습니다.",
+                "recommendation": "해당 값이 올바른지 원본 자료와 대조하여 확인하세요."
+            },
+            "date_logic": {
+                "explanation": f"'{column}' 필드의 날짜 값('{actual_value}')이 다른 날짜 필드와의 논리적 관계를 위반합니다. 예: 입사일이 퇴사일보다 늦음.",
+                "recommendation": "관련된 날짜 필드들(입사일, 퇴사일, 생년월일 등)을 함께 확인하여 논리적 순서가 맞는지 검토하세요."
+            },
+            "allowed_values": {
+                "explanation": f"'{column}' 필드의 값('{actual_value}')이 허용된 값 목록에 포함되지 않습니다.",
+                "recommendation": "오류 메시지에 표시된 허용 값 목록을 확인하고, 올바른 값으로 수정하세요."
+            },
+        }
+
+        # K-IFRS 특수 규칙
+        if rule_id.startswith("KIFRS_"):
             return {
-                "explanation": "오류 설명을 생성하는 중 문제가 발생했습니다.",
-                "recommendation": "오류 메시지를 참고하여 데이터를 수정하세요."
+                "explanation": f"K-IFRS 1019 기준서 준수 검증에서 문제가 발견되었습니다. {message}",
+                "recommendation": "K-IFRS 1019 기준서의 해당 조항을 확인하고, 데이터가 기준서 요구사항을 충족하는지 검토하세요."
             }
+
+        # 규칙 ID/메시지에서 유형 매칭
+        for rule_type, template in explanation_templates.items():
+            if rule_type in rule_id.lower() or rule_type in message.lower():
+                return template
+
+        # 키워드 기반 매칭
+        keyword_map = {
+            "필수": "required", "공백": "required", "비어": "required",
+            "중복": "no_duplicates", "유일": "no_duplicates",
+            "형식": "format", "포맷": "format", "YYYYMMDD": "format",
+            "범위": "range", "이상": "range", "이하": "range",
+            "날짜": "date_logic", "입사일": "date_logic", "퇴사일": "date_logic",
+            "허용": "allowed_values",
+        }
+
+        for keyword, rule_type in keyword_map.items():
+            if keyword in message:
+                return explanation_templates[rule_type]
+
+        # 일반 fallback
+        return {
+            "explanation": f"'{column}' 필드에서 검증 오류가 발생했습니다: {message}",
+            "recommendation": "오류 메시지를 참고하여 해당 데이터를 확인하고 수정하세요."
+        }
 
     # =========================================================================
     # Prompt Builders & Response Parsers
@@ -312,30 +391,60 @@ class AIRuleInterpreter(
         return prompt
 
     def _build_correction_prompt(self, errors: List[Dict[str, Any]], past_corrections: List[Dict[str, Any]]) -> str:
-        """수정 제안을 위한 상세 RAG 프롬프트"""
-        return f"""
-        You are a Data Quality Expert. Fix the following validation errors in K-IFRS 1019 employee data.
+        """수정 제안을 위한 상세 RAG 프롬프트 (명시적 JSON 스키마 포함)"""
+        past_section = ""
+        if past_corrections:
+            past_section = f"""
+[Past Correction Examples - Reference these for similar patterns]
+{json.dumps(past_corrections[:20], ensure_ascii=False, indent=2)}
+"""
+        return f"""You are a Data Quality Expert for K-IFRS 1019 employee benefit obligation (DBO) data.
+Analyze the following validation errors and suggest corrections.
 
-        [Past Correction Examples (Learning Context)]
-        {json.dumps(past_corrections, ensure_ascii=False)}
+{past_section}
+[Current Errors to Fix]
+{json.dumps(errors[:50], ensure_ascii=False, indent=2)}
 
-        [Current Errors to Fix]
-        {json.dumps(errors, ensure_ascii=False)}
+[Correction Rules]
+1. Date fields: Convert to YYYYMMDD format (e.g., "2023-01-15" → "20230115")
+2. Gender fields: Standardize to M/F or 1/2 based on existing data patterns
+3. Required fields: Cannot suggest a fix for missing required data - skip these
+4. Numeric fields: NEVER suggest date-formatted values for salary/amount fields
+5. Reference past correction examples when similar patterns exist
+6. Set is_auto_fixable=true only when confidence_score >= 0.9
 
-        Guidelines:
-        1. Fix format issues (dates to YYYYMMDD, gender to M/F).
-        2. Reference past examples if similar patterns exist.
-        3. Provide a clear reason for each fix.
-        4. Output JSON with "suggestions" list.
-        """
+Output ONLY valid JSON matching this exact schema:
+{{
+  "suggestions": [
+    {{
+      "error_id": "original error id from input",
+      "sheet_name": "sheet where error occurred",
+      "row": 0,
+      "column": "column_name",
+      "original_value": "the current incorrect value",
+      "fixed_value": "your suggested correction",
+      "confidence_score": 0.0,
+      "reason": "왜 이 수정이 적절한지 설명 (한국어)",
+      "is_auto_fixable": false
+    }}
+  ]
+}}"""
 
     def _parse_correction_response(self, response: str) -> List[FixSuggestion]:
-        """AI의 수정 제안 응답 파싱"""
+        """AI의 수정 제안 응답 파싱 (단계적 JSON 파서 사용)"""
         try:
-            match = re.search(r'\{.*\}', response, re.DOTALL)
-            data = json.loads(match.group(0)) if match else json.loads(response)
-            return [FixSuggestion(**s) for s in data.get("suggestions", [])]
-        except Exception:
+            data = parse_json_response(response)
+            if not data:
+                return []
+            suggestions = []
+            for s in data.get("suggestions", []):
+                try:
+                    suggestions.append(FixSuggestion(**s))
+                except Exception as e:
+                    logger.warning("Skipping invalid suggestion: %s", e)
+            return suggestions
+        except Exception as e:
+            logger.error("Failed to parse correction response: %s", e)
             return []
 
     def _build_interpretation_prompt(self, rules: List[Dict[str, Any]]) -> str:
@@ -365,13 +474,12 @@ class AIRuleInterpreter(
         """
 
     def _parse_ai_response(self, ai_response: str) -> tuple:
-        """JSON 추출 및 파싱"""
+        """JSON 추출 및 파싱 (단계적 JSON 파서 사용)"""
         try:
-            # JSON 블록 찾기 (Markdown ```json ... ``` 제거)
-            match = re.search(r'\{.*\}', ai_response, re.DOTALL)
-            json_str = match.group(0) if match else ai_response
+            data = parse_json_response(ai_response)
+            if not data:
+                raise ValueError("AI 응답에서 유효한 JSON을 찾을 수 없습니다")
 
-            data = json.loads(json_str)
             rules = [ValidationRule(**r) for r in data.get("rules", [])]
             conflicts = [RuleConflict(**c) for c in data.get("conflicts", [])]
             return rules, conflicts
@@ -1117,19 +1225,6 @@ class AIRuleInterpreter(
         """
         suggestions = []
 
-        # 금액/숫자 관련 필드 키워드
-        numeric_field_keywords = [
-            "급여", "금액", "수당", "원", "임금", "보수", "연봉", "월급",
-            "salary", "amount", "wage", "pay", "bonus", "income",
-            "기준급", "평균급", "통상급", "퇴직금", "retirement"
-        ]
-
-        # 날짜 관련 필드 키워드
-        date_field_keywords = [
-            "일", "일자", "date", "날짜", "기준일", "입사", "퇴사", "생년월일",
-            "정산", "산정", "기산", "만료", "시작", "종료"
-        ]
-
         for err in errors:
             val = str(err.get('actual_value', ''))
             field = str(err.get('column', ''))
@@ -1155,7 +1250,7 @@ class AIRuleInterpreter(
                               (rule_type == 'format' and 'numeric' in str(rule_params)) or \
                               (rule_type == 'custom' and any(kw in str(rule_params) for kw in ['number', 'amount', '금액']))
 
-            is_numeric_keyword = any(kw in field for kw in numeric_field_keywords) or \
+            is_numeric_keyword = any(kw in field for kw in NUMERIC_FIELD_KEYWORDS) or \
                                  any(kw in field_lower for kw in ["salary", "amount", "wage", "pay"])
 
             is_numeric_field = is_numeric_rule or is_numeric_keyword
@@ -1163,7 +1258,7 @@ class AIRuleInterpreter(
             is_date_rule = rule_type == 'date_logic' or \
                            (rule_type == 'format' and ('YYYY' in str(rule_params) or 'date' in str(rule_params)))
 
-            is_date_keyword = any(kw in field for kw in date_field_keywords) or \
+            is_date_keyword = any(kw in field for kw in DATE_FIELD_KEYWORDS) or \
                               any(kw in field_lower for kw in ["date"])
 
             is_date_field = is_date_rule or is_date_keyword

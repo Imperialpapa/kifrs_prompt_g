@@ -5,12 +5,16 @@ Auto Rule Generation Mixin
 """
 
 import json
+import os
 import re
 from typing import Dict, List, Any
 
+from ai.providers.cloud import parse_json_response
 from utils.logger import get_logger
 
 logger = get_logger("ai.analyzers.auto_rules")
+
+AI_PROMPT_MAX_CHARS = int(os.getenv("AI_PROMPT_MAX_CHARS", "8000"))
 
 
 class AutoRulesMixin:
@@ -206,11 +210,17 @@ class AutoRulesMixin:
                     }
                 data_info[sheet] = col_stats
 
+        data_json = json.dumps(data_info, ensure_ascii=False, default=str)
+        if len(data_json) > AI_PROMPT_MAX_CHARS:
+            logger.warning("Auto-rules 데이터 통계가 %d자로 %d자 제한 초과, 잘림 발생",
+                           len(data_json), AI_PROMPT_MAX_CHARS)
+            data_json = data_json[:AI_PROMPT_MAX_CHARS] + "..."
+
         prompt = f"""당신은 K-IFRS 1019 DBO 데이터 검증 전문가입니다.
 다음 데이터의 컬럼별 통계를 분석하여 암묵적인 데이터 검증 규칙을 제안해주세요.
 
 데이터 통계:
-{json.dumps(data_info, ensure_ascii=False, default=str)[:4000]}
+{data_json}
 
 다음 JSON 형식으로 응답하세요:
 {{
@@ -226,10 +236,6 @@ class AutoRulesMixin:
     ]
 }}"""
 
-        response = self._call_cloud_ai_sync(prompt, provider)
-        try:
-            match = re.search(r'\{.*\}', response, re.DOTALL)
-            parsed = json.loads(match.group(0)) if match else {}
-            return parsed.get("suggested_rules", [])
-        except Exception:
-            return []
+        response = await self._call_cloud_ai_async(prompt, provider)
+        parsed = parse_json_response(response)
+        return parsed.get("suggested_rules", [])
